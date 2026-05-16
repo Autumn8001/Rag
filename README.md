@@ -1,5 +1,5 @@
-#  RAG — 智能知识库问答系统
-
+|  # RAG – 智能知识库问答系统  |
+|:---------------------------:|
 <div align="center">
 
 ![Python](https://img.shields.io/badge/Python-3.13+-3776AB?style=flat-square&logo=python&logoColor=white)
