@@ -1,4 +1,4 @@
-# 🧠 Enterprise RAG — 企业级智能知识库问答系统
+#  RAG — 智能知识库问答系统
 
 <div align="center">
 
