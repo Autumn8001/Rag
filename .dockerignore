@@ -1,0 +1,35 @@
+# Python 运行时缓存
+__pycache__/
+*.py[oc]
+*.pyo
+
+# 虚拟环境（依赖通过 uv sync 在构建时安装）
+.venv/
+venv/
+
+# 本地数据（通过 Docker Volume 挂载，不打入镜像）
+data/
+
+# 敏感配置（通过 env_file 注入，不打入镜像）
+.env
+.env.local
+
+# IDE 配置
+.idea/
+.vscode/
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# 文档（不影响运行）
+docs/
+*.md
+
+# 测试与临时文件
+*.log
+logs/

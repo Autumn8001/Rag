@@ -1,0 +1,21 @@
+# Streamlit 前端镜像
+FROM python:3.13-slim
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir uv
+
+COPY pyproject.toml uv.lock ./
+
+ENV UV_PROJECT_ENVIRONMENT=/usr/local
+RUN uv sync --frozen --no-dev
+
+COPY . .
+
+EXPOSE 8501
+
+# API_BASE 由 docker-compose 通过环境变量注入（指向后端服务名）
+CMD ["streamlit", "run", "web_app.py", \
+     "--server.port=8501", \
+     "--server.address=0.0.0.0", \
+     "--server.headless=true"]

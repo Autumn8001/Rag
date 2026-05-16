@@ -1,0 +1,42 @@
+services:
+  # ── 后端：FastAPI RAG 引擎 ─────────────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag_backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - rag_data:/app/data
+    env_file:
+      - .env
+    restart: unless-stopped
+    healthcheck:
+      # 用 python 替代 curl（镜像里一定有 python，不一定有 curl）
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      # 给 RAG 引擎充足的初始化时间（加载 Chroma + 模型初始化）
+      start_period: 60s
+
+  # ── 前端：Streamlit UI ────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: rag_frontend
+    ports:
+      - "8501:8501"
+    environment:
+      - API_BASE=http://backend:8000/api/v1
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+# ── 数据卷（持久化存储，容器重建后数据不丢失）────────────────────────────
+volumes:
+  rag_data:
+    driver: local
