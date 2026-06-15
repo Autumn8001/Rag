@@ -10,6 +10,10 @@ load_dotenv(BASE_DIR / ".env")
 class Settings(BaseSettings):
     OPENAI_API_KEY: str
     BASE_URL: str = "https://open.bigmodel.cn/api/paas/v4"
+    FLASH_MODEL: str = "glm-4-flash"
+    STANDARD_MODEL: str = "glm-4"
+    PLUS_MODEL: str = "glm-4-plus"
+    EMBEDDING_MODEL: str = "embedding-3"
     DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5432/enterprise_rag"
     LANGCHAIN_TRACING_V2: str = "false"
     LANGSMITH_TRACING: str | None = None

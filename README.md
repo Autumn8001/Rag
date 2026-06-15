@@ -75,10 +75,13 @@ sequenceDiagram
 
 项目还通过 `@traceable` 接入 LangSmith，用于观察 RAG 主链路、意图路由、Query Rewrite、Critic 评估和知识入库过程。
 
-### 6. 模型工厂解耦与平滑私有化切换
+### 6. 模型工厂解耦与私有化部署预留
 
 项目在工程设计上将所有大模型和向量模型调用统一封装在 `core/llm_factory.py` 中，业务节点不直接依赖任何具体模型厂商。
-- **云端与私有化一键切换**：系统支持标准的 OpenAI-compatible 接口。在实际企业落地部署时，仅需在环境变量中修改 `BASE_URL` 和 `OPENAI_API_KEY`，即可一键将云端模型平滑切换为企业内网私有化部署的模型服务（如 vLLM、Ollama、Xinference 等），而底层的 RAG 检索、Agent 流程编排、多租户隔离与可观测性链路完全无需做任何代码级修改。
+
+- 默认使用 OpenAI-compatible 接口调用云端模型。
+- 通过 `FLASH_MODEL`、`STANDARD_MODEL`、`PLUS_MODEL` 和 `EMBEDDING_MODEL` 区分路由、生成、闲聊和向量模型。
+- 如果企业内网模型服务兼容 OpenAI API，例如 vLLM、Ollama OpenAI-compatible API 或 Xinference，通常只需要调整 `BASE_URL`、`OPENAI_API_KEY` 和模型名等环境变量，RAG 检索、权限隔离与可观测性链路无需重写。
 
 ---
 
@@ -178,10 +181,18 @@ cp .env.example .env
 # 云端大模型 (以智谱 GLM 为例)
 OPENAI_API_KEY="your_api_key_here"
 BASE_URL="https://open.bigmodel.cn/api/paas/v4"
+FLASH_MODEL="glm-4-flash"
+STANDARD_MODEL="glm-4"
+PLUS_MODEL="glm-4-plus"
+EMBEDDING_MODEL="embedding-3"
 
 # 私有化本地模型部署切换示例 (如 vLLM, Ollama, Xinference)
 # OPENAI_API_KEY="local_dummy_key"
 # BASE_URL="http://localhost:8000/v1"
+# FLASH_MODEL="local-fast-model"
+# STANDARD_MODEL="local-chat-model"
+# PLUS_MODEL="local-chat-model"
+# EMBEDDING_MODEL="local-embedding-model"
 
 DATABASE_URL="postgresql://postgres:postgres@localhost:5432/enterprise_rag"
 

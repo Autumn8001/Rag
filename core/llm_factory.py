@@ -15,7 +15,7 @@ from core.config import settings
 flash_llm = ChatOpenAI(
     api_key=settings.OPENAI_API_KEY,
     base_url=settings.BASE_URL,
-    model="glm-4-flash",
+    model=settings.FLASH_MODEL,
     temperature=0,
 )
 
@@ -23,7 +23,7 @@ flash_llm = ChatOpenAI(
 standard_llm = ChatOpenAI(
     api_key=settings.OPENAI_API_KEY,
     base_url=settings.BASE_URL,
-    model="glm-4",
+    model=settings.STANDARD_MODEL,
     temperature=0,
 )
 
@@ -31,7 +31,7 @@ standard_llm = ChatOpenAI(
 plus_llm = ChatOpenAI(
     api_key=settings.OPENAI_API_KEY,
     base_url=settings.BASE_URL,
-    model="glm-4-plus",
+    model=settings.PLUS_MODEL,
     temperature=0,
 )
 
@@ -39,5 +39,5 @@ plus_llm = ChatOpenAI(
 embeddings_model = OpenAIEmbeddings(
     api_key=settings.OPENAI_API_KEY,
     base_url=settings.BASE_URL,
-    model="embedding-3",
+    model=settings.EMBEDDING_MODEL,
 )
