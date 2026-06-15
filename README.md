@@ -1,4 +1,13 @@
-# Enterprise RAG 企业知识库问答系统
+<h1 align="center">Enterprise RAG 企业知识库问答系统</h1>
+
+<p align="center">
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.11%2B-blue?logo=python&logoColor=white" alt="Python 3.11+"></a>
+  <a href="https://fastapi.tiangolo.com/"><img src="https://img.shields.io/badge/FastAPI-0.100%2B-009688?logo=fastapi&logoColor=white" alt="FastAPI"></a>
+  <a href="https://github.com/langchain-ai/langchain"><img src="https://img.shields.io/badge/LangChain-RAG-orange" alt="LangChain"></a>
+  <a href="https://streamlit.io/"><img src="https://img.shields.io/badge/Streamlit-UI-FF4B4B?logo=streamlit&logoColor=white" alt="Streamlit"></a>
+  <a href="https://www.postgresql.org/"><img src="https://img.shields.io/badge/PostgreSQL-15%2B-4169E1?logo=postgresql&logoColor=white" alt="PostgreSQL"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green" alt="License"></a>
+</p>
 
 基于 **FastAPI + LangChain + ChromaDB + BM25 + Flashrank Rerank + PostgreSQL** 构建的企业知识库问答系统。项目支持文档上传、向量化入库、混合检索、Query Rewriting、Critic Agent 防幻觉、多租户数据隔离、RAGAS 自动评测和 LangSmith Trace。
 
