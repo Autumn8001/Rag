@@ -1,291 +1,271 @@
-# 🧠 Enterprise RAG — 企业级智能知识库问答系统
+# Enterprise RAG 企业知识库问答系统
 
-<div align="center">
+基于 **FastAPI + LangChain + ChromaDB + BM25 + Flashrank Rerank + PostgreSQL** 构建的企业知识库问答系统。项目支持文档上传、向量化入库、混合检索、Query Rewriting、Critic Agent 防幻觉、多租户数据隔离、RAGAS 自动评测和 LangSmith Trace。
 
-![Python](https://img.shields.io/badge/Python-3.13+-3776AB?style=flat-square&logo=python&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?style=flat-square&logo=fastapi&logoColor=white)
-![LangChain](https://img.shields.io/badge/LangChain-Latest-1C3C3C?style=flat-square&logo=langchain&logoColor=white)
-![ChromaDB](https://img.shields.io/badge/ChromaDB-Vector_DB-FF6B35?style=flat-square)
-![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
-
-**一个面向企业场景的生产级 RAG（检索增强生成）系统**  
-支持多文档上传 · 混合检索 · Critic Agent 防幻觉 · 全链路异步 · 流式输出
-
-</div>
-
----
-
-## 📸 系统演示
-
-> 界面简洁，极简白色主题，支持历史对话管理与知识库透视
+这个项目定位为“AI 应用开发/后端方向”的工程化 RAG 项目，重点展示从文档入库、检索增强、流式问答、权限隔离到评测观测的完整链路。
 
 ![系统界面截图](docs/screenshot.png)
 
 ---
 
-## ✨ 核心技术亮点
+## 核心能力
 
-### 1. 🔀 语义路由（Semantic Router）
+### 1. API Key 映射的多租户隔离
 
-系统在检索前使用轻量 Flash 模型进行问题分类，将请求路由至不同处理链路：
+系统通过 `X-API-Key` 请求头识别用户身份，后端在 PostgreSQL 的 `api_key_maps` 表中查询对应的 `tenant_id` 和 `user_id`，再将租户信息注入到文档管理、向量检索、BM25 缓存和历史会话查询中。
 
-- **A 路线（知识检索）**：业务/专业问题 → 触发完整 RAG 检索链路
-- **B 路线（带人格闲聊）**：日常问候 → 带系统人格的大模型直接回复
-
-> 避免将无意义请求发送到向量检索管道，节省约 60% 的不必要检索开销。
-
-### 2. 🔍 混合检索 + 重排序（Hybrid Retrieval + Rerank）
-
-```
-用户提问
-  └→ Query Rewriting（问题重写，消除指代词）
-       └→ 向量检索（ChromaDB Embedding）  ─┐
-       └→ 关键词检索（BM25）               ├→ RRF 倒数排序融合 → Flashrank Rerank → Top-3
-                                           ┘
-```
-
-- **双塔向量检索**：语义层面相似度匹配
-- **BM25 关键词检索**：精确词汇召回，pickle 序列化持久化
-- **RRF 融合算法**：解决向量/BM25 量纲不一致问题，公平混合双路结果
-- **Cross-Encoder Rerank**：精排 Top-3，最大化精准度
-
-### 3. 🛡️ Critic Agent — 防幻觉前置裁判
-
-```
-检索结果
-  └→ [Critic Agent] evaluate_context()
-       ├→ YES（资料足够回答）→ 生成最终回答
-       └→ NO（资料无关）     → 直接拒答，杜绝幻觉
+```mermaid
+sequenceDiagram
+    participant Client as Client
+    participant Auth as core/auth.py
+    participant DB as PostgreSQL
+    participant RAG as RAGEngine
+    Client->>Auth: X-API-Key
+    Auth->>DB: 查询 APIKeyMap
+    DB-->>Auth: tenant_id / user_id
+    Auth->>RAG: 注入租户上下文
+    RAG->>RAG: Chroma metadata filter + tenant BM25
+    RAG-->>Client: 返回当前租户的数据结果
 ```
 
-在生成答案**之前**，使用独立 Flash LLM 对检索结果进行相关性评估，从源头阻断"知识库中没有却强行回答"的幻觉场景。
+隔离点包括：
 
-### 4. ⚡ 全链路异步化（Full Async Pipeline）
+- 文档记录表按 `tenant_id` 过滤。
+- ChromaDB 写入和检索时带 `tenant_id` metadata。
+- BM25 按租户单独持久化为 `bm25_{tenant_id}.pkl`。
+- 历史会话列表和详情按 `tenant_id` 查询。
 
-```python
-async def stream_rag_answer(self, question: str, history: list = None):
-    clean_query = await self.rewrite_query(...)   # 异步问题重写
-    route = await self.classify_question(...)      # 异步路由判断
-    docs  = await self.final_retriever.ainvoke(...) # 异步检索
-    valid = await self.evaluate_context(...)        # 异步裁判
-    async for chunk in chain.astream(...):          # 异步流式生成
-        yield chunk
+该实现适合项目演示和实习简历展示；生产环境还需要密钥哈希、过期时间、权限角色、审计日志和更完整的认证体系。
+
+### 2. 混合检索与重排序
+
+```text
+用户问题
+  -> Query Rewriting
+  -> ChromaDB 向量检索 + BM25 关键词检索
+  -> EnsembleRetriever 加权融合
+  -> FlashrankRerank 精排
+  -> Top-K 上下文
+  -> Critic Agent 相关性判断
+  -> LLM 流式生成答案
 ```
 
-FastAPI + asyncio 全栈非阻塞，支持多用户并发请求，彻底解决大模型 I/O 阻塞导致的服务僵死问题。
+设计目的：
 
-### 5. 🏗️ 面向对象引擎封装（RAGEngine Class）
+- 向量检索负责语义相似召回。
+- BM25 负责关键词、产品名、政策名等精确匹配。
+- Rerank 对候选片段重新排序，减少低相关上下文进入生成阶段。
+- Query Rewriting 用于多轮对话中消除“它、这个、刚才那个”等指代。
 
-所有检索器、向量库、模型实例均作为 `RAGEngine` 的类属性统一管理，实现：
-- **单例模式**：全局唯一引擎实例，避免重复加载
-- **热重载**：上传新文档后自动重建 BM25 + 检索器链路，无需重启服务
-- **解耦设计**：前端通过 RESTful API 与后端完全解耦，数据库操作仅在后端执行
+### 3. Critic Agent 防幻觉
+
+在最终生成前，系统使用轻量模型判断检索上下文是否与问题相关、是否包含可用于回答的证据。若上下文完全无关，则直接拒答，降低模型在知识库无依据时编造答案的概率。
+
+后续优化中，Critic Prompt 从“资料是否已经包含完整答案”调整为“资料是否包含回答所需证据”，使计算题、条件判断题和“文档未提及”类问题不再被过度拒答。
+
+### 4. 流式响应与历史会话
+
+后端使用 FastAPI 返回 `StreamingResponse`，将模型输出以 SSE 形式逐步推送给前端。对话结束后，系统将完整问答保存到 PostgreSQL，支持按会话查看历史记录。
+
+当前实现中，LLM 和检索链路使用异步调用；部分 SQLAlchemy 数据库操作仍是同步 ORM 查询，适合本地演示和中小规模项目。
+
+### 5. RAGAS 评测与 LangSmith Trace
+
+项目内置 15 条评测集，覆盖基础事实抽取、条件过滤、数值计算、跨段落综合和拒答防幻觉。评测方式包括人工评测和 RAGAS 自动化评测。
+
+项目还通过 `@traceable` 接入 LangSmith，用于观察 RAG 主链路、意图路由、Query Rewrite、Critic 评估和知识入库过程。
+
+### 6. 模型工厂解耦与平滑私有化切换
+
+项目在工程设计上将所有大模型和向量模型调用统一封装在 `core/llm_factory.py` 中，业务节点不直接依赖任何具体模型厂商。
+- **云端与私有化一键切换**：系统支持标准的 OpenAI-compatible 接口。在实际企业落地部署时，仅需在环境变量中修改 `BASE_URL` 和 `OPENAI_API_KEY`，即可一键将云端模型平滑切换为企业内网私有化部署的模型服务（如 vLLM、Ollama、Xinference 等），而底层的 RAG 检索、Agent 流程编排、多租户隔离与可观测性链路完全无需做任何代码级修改。
 
 ---
 
-## 🗺️ 系统架构图
+## 系统流程
 
 ```mermaid
 graph TD
     A[用户提问] --> B[FastAPI /api/v1/chat]
-    B --> C{语义路由器\nclassify_question}
-
-    C -->|A路线：知识问题| D[Query Rewriting\n问题重写]
-    C -->|B路线：日常闲聊| E[带人格 LLM 直接回复]
-
-    D --> F[混合检索\nChromaDB + BM25]
-    F --> G[RRF 融合\n+Flashrank Rerank]
-    G --> H{Critic Agent\n裁判员安检}
-
-    H -->|资料充足 YES| I[standard_llm 流式生成]
-    H -->|资料不足 NO| J[拒答：知识库中无相关资料]
-
-    I --> K[引用溯源\n返回来源文件名]
-    K --> L[SSE 流式推送到前端]
-    E --> L
-
-    style H fill:#ff6b6b,color:#fff
-    style C fill:#4ecdc4,color:#fff
-    style I fill:#45b7d1,color:#fff
+    B --> Auth[API Key 鉴权与租户识别]
+    Auth --> C{语义路由}
+    C -->|知识库问题| D[Query Rewriting]
+    C -->|闲聊/无关问题| E[轻量模型直接回复]
+    D --> F[ChromaDB 向量检索]
+    D --> G[BM25 关键词检索]
+    F --> H[Ensemble 融合]
+    G --> H
+    H --> I[Flashrank Rerank]
+    I --> J{Critic Agent}
+    J -->|证据相关| K[LLM 流式生成]
+    J -->|资料无关| L[安全拒答]
+    K --> M[返回答案与来源]
+    E --> M
+    L --> M
 ```
 
 ---
 
-## 🛠️ 技术栈
+## 技术栈
 
-| 层级 | 技术 | 说明 |
-|------|------|------|
-| **后端框架** | FastAPI | 全异步 HTTP 服务，SSE 流式推送 |
-| **RAG 框架** | LangChain | LCEL 管道编排，全链路异步 |
-| **向量数据库** | ChromaDB | 本地持久化向量存储 |
-| **关键词检索** | BM25Retriever | pickle 序列化持久化 |
-| **重排序** | FlashrankRerank | Cross-Encoder 精排 |
-| **前端** | Streamlit | 极简白色主题，前后端完全解耦 |
-| **数据库** | SQLite + SQLAlchemy | 对话历史持久化，ORM 映射 |
-| **模型** | 智谱 GLM / OpenAI 兼容 | 三级模型分层策略 |
-| **依赖管理** | UV | 高性能 Python 包管理器 |
-
----
-
-## 🏛️ 三级模型分层策略
-
-| 模型等级 | 用途 | 目的 |
-|---------|------|------|
-| `flash_llm` | 路由判断 / 问题重写 / 裁判员 | 极速、低成本 |
-| `standard_llm` | A 路线 RAG 生成 | 质量与成本平衡 |
-| `plus_llm` | B 路线带人格闲聊 | 最高质量自然对话 |
-
-> 通过模型分层，在保证回答质量的同时，整体 Token 消耗降低约 60%。
+| 模块 | 技术 |
+| :--- | :--- |
+| 后端服务 | FastAPI, StreamingResponse, SSE |
+| RAG 框架 | LangChain |
+| 向量库 | ChromaDB |
+| 关键词检索 | BM25Retriever |
+| 结果重排 | FlashrankRerank |
+| 关系型数据库 | PostgreSQL, SQLAlchemy |
+| 权限隔离 | API Key, tenant_id |
+| 评测 | RAGAS, 自定义 15 问测试集 |
+| 可观测性 | LangSmith Trace |
+| 前端 | Streamlit |
+| 部署 | Docker Compose |
+| 依赖管理 | uv |
 
 ---
 
-## 📦 快速启动
+## 项目结构
 
-### 前置要求
+```text
+Enterprise_RAG/
+├── api/
+│   ├── chat_routes.py       # 流式问答、历史会话接口
+│   └── admin_routes.py      # 文档上传、列表、清空接口
+├── core/
+│   ├── auth.py              # API Key 鉴权与租户识别
+│   ├── config.py            # 环境变量配置与 LangSmith 环境同步
+│   ├── crud.py              # 数据库 CRUD
+│   ├── database.py          # SQLAlchemy 连接与初始化
+│   ├── llm_factory.py       # 模型工厂
+│   ├── models.py            # ORM 模型
+│   └── rag_engine.py        # RAG 检索生成主流程
+├── eval/
+│   ├── ragas_dataset.json   # RAGAS 评测数据集
+│   └── evaluate_ragas.py    # 自动化评测脚本
+├── docs/
+│   ├── evaluation_report.md # 人工评测报告
+│   ├── ragas_report.md      # RAGAS 自动化评测报告
+│   └── screenshot.png       # 项目界面截图
+├── docker-compose.yml
+├── main.py
+├── web_app.py
+├── pyproject.toml
+└── .env.example
+```
 
-- Python 3.13+
-- [UV 包管理器](https://docs.astral.sh/uv/)
+---
 
-### 安装步骤
+## 快速启动
+
+### 1. 安装依赖
 
 ```bash
-# 1. 克隆项目
-git clone https://github.com/your-username/Enterprise_RAG.git
-cd Enterprise_RAG
-
-# 2. 安装依赖（UV 自动创建虚拟环境）
 uv sync
-
-# 3. 配置环境变量
-cp .env.example .env
-# 编辑 .env，填入你的 API 密钥
 ```
 
-### 配置 `.env`
+### 2. 配置环境变量
+
+复制 `.env.example` 为 `.env`：
+
+```bash
+cp .env.example .env
+```
+
+示例配置：
 
 ```env
-# 智谱 AI（推荐）
-GLM_API_KEY=your_zhipu_api_key
-GLM_API_BASE=https://open.bigmodel.cn/api/paas/v4/
+# 云端大模型 (以智谱 GLM 为例)
+OPENAI_API_KEY="your_api_key_here"
+BASE_URL="https://open.bigmodel.cn/api/paas/v4"
 
-# 或 OpenAI 兼容 API
-OPENAI_API_KEY=your_openai_api_key
-OPENAI_API_BASE=https://api.openai.com/v1/
+# 私有化本地模型部署切换示例 (如 vLLM, Ollama, Xinference)
+# OPENAI_API_KEY="local_dummy_key"
+# BASE_URL="http://localhost:8000/v1"
+
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/enterprise_rag"
+
+# LangSmith 可选
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY="your_langsmith_api_key"
+LANGSMITH_PROJECT="enterprise-rag"
 ```
 
-### 方式一：本地开发启动
+### 3. 启动服务
+
+Docker Compose 一键启动：
 
 ```bash
-# 终端 1：启动后端（FastAPI）
-uvicorn main:app --reload --port 8000
+docker compose up --build -d
+```
 
-# 终端 2：启动前端（Streamlit）
+或本地分步启动：
+
+```bash
+docker compose up -d db
+uvicorn main:app --reload --port 8000
 streamlit run web_app.py
 ```
 
-### 方式二：Docker 一键启动（推荐）
-
-```bash
-# 1. 确保 .env 文件已配置 API 密钥
-cp .env.example .env
-
-# 2. 构建镜像并启动所有服务
-docker compose up --build -d
-
-# 3. 查看服务状态
-docker compose ps
-
-# 4. 停止服务
-docker compose down
-```
+访问地址：
 
 | 服务 | 地址 |
-|------|------|
-| 前端页面 | http://localhost:8501 |
+| :--- | :--- |
+| 前端 | http://localhost:8501 |
 | 后端 API | http://localhost:8000 |
-| 交互式 API 文档 | http://localhost:8000/docs |
+| API 文档 | http://localhost:8000/docs |
 
-> **数据持久化**：知识库数据存储在 Docker Volume `rag_data` 中，执行 `docker compose down` 不会丢失数据。如需彻底清空，运行 `docker compose down -v`。
+---
 
+## API 概览
 
+业务接口需要携带 `X-API-Key` 请求头。系统初始化时会写入演示用 Key：
 
-## 📡 API 接口文档
-
-### 对话接口
+- `key_company_a`：绑定 `tenant_company_A`。
+- `key_company_b`：绑定 `tenant_company_B`。
+- `key_default`：绑定 `default_tenant`。
 
 | 方法 | 路径 | 说明 |
-|------|------|------|
-| `POST` | `/api/v1/chat` | 流式 RAG 问答（SSE） |
-| `GET` | `/api/v1/health` | 服务健康检查 |
-
-**请求示例（chat）：**
-```json
-POST /api/v1/chat
-{
-  "question": "公司的请假制度是什么？",
-  "session_id": "uuid-xxxx",
-  "history": []
-}
-```
-
-### 知识库管理
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| `POST` | `/api/v1/upload` | 上传文档（PDF/DOCX/MD/TXT） |
-| `DELETE` | `/api/v1/clear` | 清空知识库 |
-| `GET` | `/api/v1/list` | 查看知识库文档列表（分页） |
-| `GET` | `/api/v1/sessions` | 获取历史会话列表 |
-| `GET` | `/api/v1/history/{session_id}` | 获取指定会话的完整记录 |
-| `DELETE` | `/api/v1/history/{session_id}` | 删除指定会话记录 |
+| :--- | :--- | :--- |
+| `POST` | `/api/v1/chat` | 流式 RAG 问答 |
+| `POST` | `/api/v1/upload` | 上传并索引文档 |
+| `GET` | `/api/v1/list` | 查看当前租户文档列表 |
+| `DELETE` | `/api/v1/clear` | 清空当前租户知识库和历史 |
+| `GET` | `/api/v1/sessions` | 查看当前租户会话列表 |
+| `GET` | `/api/v1/history/{session_id}` | 查看指定会话历史 |
+| `DELETE` | `/api/v1/history/{session_id}` | 删除指定会话 |
 
 ---
 
-## 📁 项目结构
+## 评测结果
 
-```
-Enterprise_RAG/
-├── api/
-│   ├── chat_routes.py      # 对话 & 历史记录接口
-│   └── admin_routes.py     # 文档上传 & 知识库管理接口
-├── core/
-│   ├── config.py           # 环境变量 & 配置管理（Pydantic Settings）
-│   ├── llm_factory.py      # 三级模型工厂（flash/standard/plus）
-│   ├── rag_engine.py       # RAGEngine 核心类（OOP 封装）
-│   ├── database.py         # SQLAlchemy 数据库连接管理
-│   ├── models.py           # ORM 数据模型（ChatHistory）
-│   └── crud.py             # 数据库 CRUD 操作
-├── schemas/
-│   └── chat_schema.py      # Pydantic 请求/响应模型
-├── data/                   # 本地数据库（.gitignore 忽略）
-├── main.py                 # FastAPI 应用入口 & 路由注册
-├── web_app.py              # Streamlit 前端应用
-├── pyproject.toml          # 项目依赖配置（UV）
-└── .env.example            # 环境变量模板
-```
+### 人工评测
 
-## 📊 系统评测
+基于《星耀科技 2024 年度产品与员工手册》构建 15 条压力测试，覆盖基础抽取、条件过滤、数值计算、跨段落综合和拒答防幻觉。
 
-基于《星耀科技 2024 年度产品与员工手册》的 **15 项压力测试**，覆盖基础提取、条件过滤、数值推理、跨段落综合、拒答防幻觉五大维度。
+- 初始版本：11 / 15，准确率 73.3%。
+- 优化后：13 / 15，准确率 86.7%。
 
-| 版本 | 得分 | 准确率 | 关键改动 |
-|------|------|--------|---------|
-| V1（初始版） | 11/15 | 73.3% | 初始 Critic Prompt + Rerank Top-3 |
-| **V2（优化后）** | **13/15** | **86.7%** | 放宽裁判 Prompt + Rerank Top-5 |
+完整报告见：[docs/evaluation_report.md](docs/evaluation_report.md)
 
-> 📄 完整评测报告：[docs/evaluation_report.md](docs/evaluation_report.md)
+### RAGAS 自动评测
+
+RAGAS 评测用于观察回答忠实度、答案相关性和上下文召回率。优化 Critic Prompt 和检索参数后，报告显示：
+
+| 指标 | 优化前 | 优化后 |
+| :--- | :---: | :---: |
+| Faithfulness | 0.5426 | 0.6767 |
+| Answer Relevancy | 0.2647 | 0.3590 |
+| Context Recall | 1.0000 | 0.9333 |
+
+完整报告见：[docs/ragas_report.md](docs/ragas_report.md)
+
+这些分数不代表系统已经达到生产级准确率，而是用于展示如何通过评测发现问题并迭代 RAG 链路。
 
 ---
 
-## 🔒 安全说明
+## 安全与上传说明
 
-
-- `.env` 文件（含 API 密钥）已在 `.gitignore` 中忽略，**请勿提交**
-- `data/` 目录（向量数据库文件）已在 `.gitignore` 中忽略
-- 生产环境可通过 **FastAPI-Users** 或 **OAuth2** 接入企业认证系统
-
----
-
-## 📄 License
-
-[MIT License](LICENSE)
+- `.env`、`data/`、`.venv/`、`__pycache__/` 等目录已在 `.gitignore` 中忽略。
+- 上传 GitHub 前请确认没有提交真实 API Key、数据库密码或私有文档。
+- 本项目的 API Key 隔离用于演示多租户思路，生产环境应增加密钥哈希、权限角色、审计日志和密钥轮换机制。

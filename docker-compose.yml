@@ -1,4 +1,23 @@
 services:
+  # ── 数据库：PostgreSQL ──────────────────────────────────────────────────
+  db:
+    image: postgres:15-alpine
+    container_name: rag_postgres
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=enterprise_rag
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d enterprise_rag"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # ── 后端：FastAPI RAG 引擎 ─────────────────────────────────────────────────
   backend:
     build:
@@ -11,6 +30,11 @@ services:
       - rag_data:/app/data
     env_file:
       - .env
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/enterprise_rag
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       # 用 python 替代 curl（镜像里一定有 python，不一定有 curl）
@@ -40,3 +64,6 @@ services:
 volumes:
   rag_data:
     driver: local
+  postgres_data:
+    driver: local
+

@@ -11,10 +11,11 @@ PAGE_SIZE = 10
 
 
 @st.cache_data(ttl=10)
-def fetch_sessions():
+def fetch_sessions(api_key: str):
     """缓存历史会话列表，10 秒内不重复请求。"""
     try:
-        res = requests.get(f"{API_BASE}/sessions", timeout=5)
+        headers = {"X-API-Key": api_key}
+        res = requests.get(f"{API_BASE}/sessions", headers=headers, timeout=5)
         if res.status_code == 200:
             return res.json().get("data", [])
     except Exception:
@@ -23,12 +24,14 @@ def fetch_sessions():
 
 
 @st.cache_data(ttl=10)
-def fetch_kb_list(page: int, page_size: int):
+def fetch_kb_list(page: int, page_size: int, api_key: str):
     """缓存知识库列表，10 秒内不重复请求。"""
     try:
+        headers = {"X-API-Key": api_key}
         res = requests.get(
             f"{API_BASE}/list",
             params={"page": page, "page_size": page_size},
+            headers=headers,
             timeout=10,
         )
         if res.status_code == 200:
@@ -227,10 +230,17 @@ defaults = {
     "show_clear_confirm": False,
     "show_kb_details": False,
     "kb_page": 1,
+    "api_key": "key_default",
 }
 for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
+
+# ── Helper Headers ────────────────────────────────────────────────────────────
+def get_auth_headers():
+    return {
+        "X-API-Key": st.session_state.api_key,
+    }
 
 # ── 侧边栏 ────────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -243,6 +253,18 @@ with st.sidebar:
         </div>
     </div>
     """, unsafe_allow_html=True)
+
+    # API 密钥配置部分
+    st.markdown('<div class="sidebar-label">安全凭证配置</div>', unsafe_allow_html=True)
+    a_key = st.text_input("API 密钥 (API Key)", value=st.session_state.api_key, key="api_key_input")
+    
+    # 检测到配置变更时重置聊天状态并强制刷新
+    if a_key != st.session_state.api_key:
+        st.session_state.api_key = a_key
+        st.session_state.session_id = str(uuid.uuid4())
+        st.session_state.messages = []
+        st.session_state.show_kb_details = False
+        st.rerun()
 
     if st.button("+ 新对话", use_container_width=True):
         st.session_state.session_id = str(uuid.uuid4())
@@ -257,7 +279,7 @@ with st.sidebar:
         label_visibility="collapsed", key="history_search"
     )
 
-    sessions = fetch_sessions()
+    sessions = fetch_sessions(st.session_state.api_key)
     if search_query:
         sessions = [s for s in sessions if search_query.lower() in s.get("title", "").lower()]
     if not sessions:
@@ -268,7 +290,11 @@ with st.sidebar:
                 st.session_state.session_id = s["session_id"]
                 st.session_state.show_kb_details = False
                 try:
-                    history_res = requests.get(f"{API_BASE}/history/{s['session_id']}", timeout=5)
+                    history_res = requests.get(
+                        f"{API_BASE}/history/{s['session_id']}",
+                        headers=get_auth_headers(),
+                        timeout=5
+                    )
                     if history_res.status_code == 200:
                         st.session_state.messages = history_res.json().get("data", [])
                 except Exception:
@@ -289,13 +315,20 @@ with st.sidebar:
             with st.spinner(f"正在上传 {uploaded_file.name}..."):
                 try:
                     files = {"file": (uploaded_file.name, uploaded_file, uploaded_file.type)}
-                    r = requests.post(f"{API_BASE}/upload", files=files, timeout=30)
+                    r = requests.post(
+                        f"{API_BASE}/upload",
+                        files=files,
+                        headers=get_auth_headers(),
+                        timeout=30
+                    )
                     if r.status_code == 200:
                         result = r.json()
                         if result.get("status") == "skipped":
                             st.warning(result["message"])
                         else:
                             st.success(f"{uploaded_file.name} 上传成功")
+                            # 上传成功后清除 kb 列表的缓存，让其立刻刷新
+                            fetch_kb_list.clear()
                     else:
                         st.error(f"上传失败: {r.status_code}")
                 except requests.exceptions.Timeout:
@@ -311,7 +344,11 @@ with st.sidebar:
         if st.button("健康检查", use_container_width=True):
             with st.spinner("检查中..."):
                 try:
-                    r = requests.get(f"{API_BASE}/health", timeout=5)
+                    r = requests.get(
+                        f"{API_BASE}/health",
+                        headers=get_auth_headers(),
+                        timeout=5
+                    )
                     if r.status_code == 200:
                         st.success("服务运行正常")
                         with st.expander("查看详情"):
@@ -325,16 +362,21 @@ with st.sidebar:
             st.session_state.show_clear_confirm = True
 
         if st.session_state.show_clear_confirm:
-            st.warning("此操作不可恢复，确认清空？")
+            st.warning("此操作不可恢复，确认清空该租户下的知识库？")
             c1, c2 = st.columns(2)
             with c1:
                 if st.button("确认", key="confirm_clear"):
                     try:
-                        r = requests.delete(f"{API_BASE}/clear", timeout=30)
+                        r = requests.delete(
+                            f"{API_BASE}/clear",
+                            headers=get_auth_headers(),
+                            timeout=30
+                        )
                         if r.status_code == 200:
-                            st.success("知识库已清空")
+                            st.success("该租户知识库已清空")
                             st.session_state.messages = []
                             st.session_state.show_clear_confirm = False
+                            fetch_kb_list.clear()
                             st.rerun()
                         else:
                             st.error(f"清空失败: {r.status_code}")
@@ -348,7 +390,11 @@ with st.sidebar:
 # ── 主区域 ────────────────────────────────────────────────────────────────────
 if st.session_state.show_kb_details:
     st.markdown("### 知识库详情")
-    data = fetch_kb_list(st.session_state.kb_page, PAGE_SIZE)
+    data = fetch_kb_list(
+        st.session_state.kb_page,
+        PAGE_SIZE,
+        st.session_state.api_key
+    )
     if data:
         kb_data = data.get("data", [])
         total_items = data.get("total", 0)
@@ -375,7 +421,7 @@ if st.session_state.show_kb_details:
                     st.session_state.show_kb_details = False
                     st.rerun()
         else:
-            st.info("知识库为空，请先上传文档")
+            st.info("该租户下的知识库为空，请先上传文档")
             if st.button("收起"):
                 st.session_state.show_kb_details = False
                 st.rerun()
@@ -404,13 +450,21 @@ if prompt := st.chat_input("向知识库提问，或者和我聊聊天..."):
         full_response = ""
         try:
             payload = {"question": prompt, "session_id": st.session_state.session_id}
-            response = requests.post(f"{API_BASE}/chat", json=payload, stream=True, timeout=60)
+            response = requests.post(
+                f"{API_BASE}/chat",
+                json=payload,
+                headers=get_auth_headers(),
+                stream=True,
+                timeout=60
+            )
             for chunk in response.iter_content(chunk_size=1024, decode_unicode=True):
                 if chunk:
                     full_response += chunk
                     placeholder.markdown(full_response + "▌")
             placeholder.markdown(full_response)
             st.session_state.messages.append({"role": "assistant", "content": full_response})
+            # 刷新会话缓存以立刻显示在历史对话列表中
+            fetch_sessions.clear()
         except requests.exceptions.Timeout:
             st.error("请求超时，请稍后重试")
         except Exception as e:

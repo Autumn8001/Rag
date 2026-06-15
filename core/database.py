@@ -4,26 +4,22 @@ from sqlalchemy.orm import sessionmaker
 
 # 引入我们刚才画好的设计图纸
 from core.models import Base
+from core.config import settings
 
 # ==========================================
 # 1. 确定数据库的物理存放位置 (水库)
 # ==========================================
-# 我们把数据库文件就存在本地的 data 目录下，名字叫 rag_data.db
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DB_DIR = os.path.join(BASE_DIR, "data")
-os.makedirs(DB_DIR, exist_ok=True) # 如果没这个文件夹就自动建一个
-
-SQLALCHEMY_DATABASE_URL = f"sqlite:///{os.path.join(DB_DIR, 'rag_data.db')}"
+SQLALCHEMY_DATABASE_URL = settings.DATABASE_URL
 
 # ==========================================
 # 2. 创建数据库引擎 (超级大水泵)
 # ==========================================
-# engine 负责和底层 SQLite 文件进行极其底层的二进制通信
-# 注意：check_same_thread=False 是 SQLite 专属的坑！
-# 因为 FastAPI 是多线程并发的，不加这个参数，并发请求时 SQLite 会直接报错崩溃。
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
-)
+if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
+    engine = create_engine(
+        SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
+    )
+else:
+    engine = create_engine(SQLALCHEMY_DATABASE_URL)
 # ==========================================
 # 3. 创建会话工厂 (水龙头制造机)
 # ==========================================
@@ -37,9 +33,30 @@ def init_db():
     拿着 models.py 里的 Base 设计图，去水库里把真正的表格砌出来！
     如果表格已经存在了，它会自动跳过，极其智能。
     """
-    print("🧱 [Database] 正在检查并初始化 SQLite 数据库表结构...")
+    print("[Database] 正在检查并初始化关系型数据库表结构...")
     Base.metadata.create_all(bind=engine)
-    print("✅ [Database] 关系型数据库准备就绪！")
+
+    # 自动注入测试用的 API Key 映射数据
+    db = SessionLocal()
+    try:
+        from core.models import APIKeyMap
+        if db.query(APIKeyMap).count() == 0:
+            print("[Database] 检测到 API Key 映射表为空，正在注入演示数据...")
+            demo_keys = [
+                APIKeyMap(api_key="key_company_a", tenant_id="tenant_company_A", user_id="user_A"),
+                APIKeyMap(api_key="key_company_b", tenant_id="tenant_company_B", user_id="user_B"),
+                APIKeyMap(api_key="key_default", tenant_id="default_tenant", user_id="default_user")
+            ]
+            db.bulk_save_objects(demo_keys)
+            db.commit()
+            print("[Database] 演示数据注入成功！")
+    except Exception as e:
+        db.rollback()
+        print(f"[Database] 注入演示数据失败: {e}")
+    finally:
+        db.close()
+
+    print("[Database] 关系型数据库准备就绪！")
 # ==========================================
 # 5. 依赖注入函数 (给大堂经理 FastAPI 用的)
 # ==========================================

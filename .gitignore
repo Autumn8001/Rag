@@ -40,5 +40,9 @@ Thumbs.db
 *.log
 logs/
 
+# Personal planning / scratch files (not for GitHub)
+AI_Plan.md
+EnterpriseRAG_Task.md
+
 # UV lock file (optional, uncomment if you want to ignore it)
 # uv.lock

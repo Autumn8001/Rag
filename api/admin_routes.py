@@ -19,6 +19,7 @@ from core.database import get_db
 from core.crud import get_document_by_hash, create_document_record
 from core.models import DocumentRecord, ChatHistory
 from core.rag_engine import ingest_knowledge, clear_all_data
+from core.auth import get_auth_headers
 
 logger = logging.getLogger(__name__)
 
@@ -32,20 +33,23 @@ os.makedirs("data/uploads", exist_ok=True)
 async def upload_document(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
+    auth: dict = Depends(get_auth_headers),
 ):
     """
     上传文档流程：
-    1. 计算文件 MD5 指纹，查重后跳过已入库文件
+    1. 计算文件 MD5 指纹，结合租户ID进行查重后跳过已入库文件
     2. 使用 MarkItDown 将文件转换为 Markdown 格式
-    3. 调用 RAGEngine 切分入库，更新 BM25 检索器
-    4. 在 SQLite 中记录文件元数据
+    3. 调用 RAGEngine 切分入库并带上 tenant_id，更新对应租户的 BM25 检索器
+    4. 在 PostgreSQL 中记录文件元数据
     """
+    tenant_id = auth["tenant_id"]
+    user_id = auth["user_id"]
     try:
         content = await file.read()
         file_hash = hashlib.md5(content).hexdigest()
 
-        # 查重：已存在则跳过，节省 Embedding 调用成本
-        existing = get_document_by_hash(db, file_hash)
+        # 查重：同租户下存在则跳过，节省 Embedding 调用成本
+        existing = get_document_by_hash(db, file_hash, tenant_id)
         if existing:
             return {
                 "status": "skipped",
@@ -60,11 +64,17 @@ async def upload_document(
         md_result = md_converter.convert(file_path)
         md_text = md_result.text_content
 
-        success = ingest_knowledge(md_text, file.filename)
+        success = ingest_knowledge(md_text, file.filename, tenant_id)
         if not success:
             raise HTTPException(status_code=500, detail="Failed to index document.")
 
-        create_document_record(db=db, filename=file.filename, file_hash=file_hash)
+        create_document_record(
+            db=db,
+            filename=file.filename,
+            file_hash=file_hash,
+            tenant_id=tenant_id,
+            user_id=user_id
+        )
         return {
             "status": "success",
             "message": f"File '{file.filename}' has been indexed successfully.",
@@ -78,19 +88,23 @@ async def upload_document(
 
 
 @router.delete("/clear", summary="Clear the entire knowledge base")
-async def clear_knowledge_base(db: Session = Depends(get_db)):
-    """清空向量库、BM25 索引，以及数据库中的文档记录和对话历史。"""
+async def clear_knowledge_base(
+    db: Session = Depends(get_db),
+    auth: dict = Depends(get_auth_headers),
+):
+    """清空当前租户的向量库、BM25 索引，以及数据库中的文档记录和对话历史。"""
+    tenant_id = auth["tenant_id"]
     try:
-        db.query(DocumentRecord).delete()
-        db.query(ChatHistory).delete()
-        success = clear_all_data()
+        db.query(DocumentRecord).filter(DocumentRecord.tenant_id == tenant_id).delete()
+        db.query(ChatHistory).filter(ChatHistory.tenant_id == tenant_id).delete()
+        success = clear_all_data(tenant_id)
         if not success:
             raise ValueError("Vector store cleanup failed.")
         db.commit()
         return {"status": "success", "message": "Knowledge base cleared successfully."}
     except Exception as e:
         db.rollback()
-        logger.error("Failed to clear knowledge base: %s", e)
+        logger.error("Failed to clear knowledge base for tenant %s: %s", tenant_id, e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -99,14 +113,17 @@ async def list_knowledge_base(
     page: int = Query(1, ge=1, description="Page number, starting from 1"),
     page_size: int = Query(10, ge=1, le=100, description="Number of records per page"),
     db: Session = Depends(get_db),
+    auth: dict = Depends(get_auth_headers),
 ):
+    tenant_id = auth["tenant_id"]
     try:
-        total_items = db.query(DocumentRecord).count()
+        total_items = db.query(DocumentRecord).filter(DocumentRecord.tenant_id == tenant_id).count()
         total_pages = max(1, (total_items + page_size - 1) // page_size)
         offset = (page - 1) * page_size
 
         records = (
             db.query(DocumentRecord)
+            .filter(DocumentRecord.tenant_id == tenant_id)
             .order_by(DocumentRecord.created_at.desc())
             .offset(offset)
             .limit(page_size)
@@ -133,5 +150,5 @@ async def list_knowledge_base(
         }
 
     except Exception as e:
-        logger.error("Failed to retrieve document list: %s", e)
+        logger.error("Failed to retrieve document list for tenant %s: %s", tenant_id, e)
         raise HTTPException(status_code=500, detail=str(e))

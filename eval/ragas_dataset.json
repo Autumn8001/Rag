@@ -1,0 +1,62 @@
+[
+  {
+    "question": "Nova Pro 的定价是多少？",
+    "ground_truth": "2999元。"
+  },
+  {
+    "question": "Nova Lite 采用的是什么表面玻璃？",
+    "ground_truth": "康宁大猩猩玻璃。"
+  },
+  {
+    "question": "如果我想买支持独立通话的手表，应该选哪款？",
+    "ground_truth": "Nova Pro。"
+  },
+  {
+    "question": "Nova Lite 的防水等级能否在热水中使用并享受保修？",
+    "ground_truth": "不能。热水使用属于免责条款。"
+  },
+  {
+    "question": "一位星耀老用户在双11期间购买一块 Nova Pro，实际需要支付多少钱？",
+    "ground_truth": "2429.1元。(2699×0.9)"
+  },
+  {
+    "question": "普通用户在双11期间购买 Nova Pro 和一条真皮表带，总共多少钱？",
+    "ground_truth": "2898元。(2699+199)"
+  },
+  {
+    "question": "加购了\"尊享无忧包\"的 Nova Pro，总保修期是多久？",
+    "ground_truth": "3年。"
+  },
+  {
+    "question": "普通员工二线城市出差3天(含1天周末未调休)，能拿多少补贴？",
+    "ground_truth": "390元。(80×3+150)"
+  },
+  {
+    "question": "文档中提到的免费保修免责条款有哪些情况？",
+    "ground_truth": "1.玻璃破碎 2.进水 3.私自拆机"
+  },
+  {
+    "question": "Nova Pro 的原装表带是什么颜色的？",
+    "ground_truth": "文档中未提及。"
+  },
+  {
+    "question": "如果我 12 月份购买 Nova Lite，能享受直降 100 元的优惠吗？",
+    "ground_truth": "文档无法确定。(仅明确双11)"
+  },
+  {
+    "question": "购买 Nova Lite 的老用户，在双11下单后可以7天无理由退货吗？",
+    "ground_truth": "不可以。老用户折扣订单不支持。"
+  },
+  {
+    "question": "3ATM 防水设备在淡水中浸泡 20 分钟导致损坏，能免费保修吗？",
+    "ground_truth": "能。(未超过30分钟免责阈值)"
+  },
+  {
+    "question": "加购\"尊享无忧包\"除了延长保修，还有什么额外权益？",
+    "ground_truth": "包含一次免费表带更换服务。"
+  },
+  {
+    "question": "张三（总监）去上海出差4晚，住宿最多能报销多少？",
+    "ground_truth": "2000元。(一线城市500/晚)"
+  }
+]

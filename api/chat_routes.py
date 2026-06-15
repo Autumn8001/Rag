@@ -14,16 +14,27 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
 from core.database import get_db
-from core.crud import create_chat_record
+from core.crud import create_chat_record, get_chat_history
 from core.models import ChatHistory
 from core.rag_engine import stream_rag_answer
+from core.auth import get_auth_headers
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["Chat"])
+
+
+class ChatRequest(BaseModel):
+    question: str = Field(..., min_length=1, description="用户当前问题")
+    session_id: str | None = Field(default=None, description="当前会话 ID")
+    history: list[dict[str, str]] | None = Field(
+        default=None, description="前端可选传入的历史消息"
+    )
 
 
 @router.get("/health", summary="Service health check")
@@ -33,20 +44,30 @@ async def health_check():
 
 @router.post("/chat", summary="Streaming RAG Q&A")
 async def chat_endpoint(
-    request: dict,
+    request: ChatRequest,
     db: Session = Depends(get_db),
+    auth: dict = Depends(get_auth_headers),
 ):
     """
     接收用户问题，通过 RAG 流水线生成答案并以 SSE 流式返回。
     对话结束后将完整问答记录持久化到数据库。
     """
-    user_question = request.get("question")
-    history = request.get("history")
-    session_id = request.get("session_id", str(uuid.uuid4()))
+    user_question = request.question.strip()
+    session_id = request.session_id or str(uuid.uuid4())
+    tenant_id = auth["tenant_id"]
+    user_id = auth["user_id"]
+
+    history = request.history
+    if history is None:
+        records = get_chat_history(db, session_id=session_id, tenant_id=tenant_id, limit=5)
+        history = []
+        for record in records:
+            history.append({"role": "user", "content": record.user_query})
+            history.append({"role": "assistant", "content": record.ai_response})
 
     async def stream_generator():
         full_response = ""
-        async for chunk in stream_rag_answer(user_question, history):
+        async for chunk in stream_rag_answer(user_question, history, tenant_id=tenant_id):
             full_response += chunk
             yield chunk
 
@@ -56,6 +77,8 @@ async def chat_endpoint(
                 session_id=session_id,
                 user_query=user_question,
                 ai_response=full_response,
+                tenant_id=tenant_id,
+                user_id=user_id,
             )
         except Exception as e:
             logger.error("Failed to save chat record (session=%s): %s", session_id, e)
@@ -64,41 +87,69 @@ async def chat_endpoint(
 
 
 @router.get("/sessions", summary="List recent chat sessions")
-async def get_chat_sessions(db: Session = Depends(get_db)):
+async def get_chat_sessions(
+    db: Session = Depends(get_db),
+    auth: dict = Depends(get_auth_headers),
+):
+    tenant_id = auth["tenant_id"]
     try:
-        all_records = (
+        latest_records = (
+            db.query(
+                ChatHistory.session_id,
+                func.max(ChatHistory.created_at).label("latest_at"),
+            )
+            .filter(ChatHistory.tenant_id == tenant_id)
+            .group_by(ChatHistory.session_id)
+            .subquery()
+        )
+
+        records = (
             db.query(ChatHistory)
+            .join(
+                latest_records,
+                and_(
+                    ChatHistory.session_id == latest_records.c.session_id,
+                    ChatHistory.created_at == latest_records.c.latest_at,
+                ),
+            )
+            .filter(ChatHistory.tenant_id == tenant_id)
             .order_by(ChatHistory.created_at.desc())
             .limit(50)
+            .all()
         )
         sessions = []
-        seen_ids = set()
-        for record in all_records:
-            if record.session_id not in seen_ids:
-                seen_ids.add(record.session_id)
-                title = (
-                    record.user_query[:20] + "..."
-                    if len(record.user_query) > 20
-                    else record.user_query
-                )
-                sessions.append(
-                    {
-                        "session_id": record.session_id,
-                        "title": title,
-                        "created_at": record.created_at.strftime("%Y-%m-%d %H:%M:%S"),
-                    }
-                )
+        for record in records:
+            title = (
+                record.user_query[:20] + "..."
+                if len(record.user_query) > 20
+                else record.user_query
+            )
+            sessions.append(
+                {
+                    "session_id": record.session_id,
+                    "title": title,
+                    "created_at": record.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+                }
+            )
         return {"status": "success", "data": sessions}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/history/{session_id}", summary="Get full conversation history")
-async def get_session_history(session_id: str, db: Session = Depends(get_db)):
+async def get_session_history(
+    session_id: str,
+    db: Session = Depends(get_db),
+    auth: dict = Depends(get_auth_headers),
+):
+    tenant_id = auth["tenant_id"]
     try:
         records = (
             db.query(ChatHistory)
-            .filter(ChatHistory.session_id == session_id)
+            .filter(
+                ChatHistory.session_id == session_id,
+                ChatHistory.tenant_id == tenant_id
+            )
             .order_by(ChatHistory.created_at.asc())
             .all()
         )
@@ -112,9 +163,17 @@ async def get_session_history(session_id: str, db: Session = Depends(get_db)):
 
 
 @router.delete("/history/{session_id}", summary="Delete a chat session")
-async def delete_session_history(session_id: str, db: Session = Depends(get_db)):
+async def delete_session_history(
+    session_id: str,
+    db: Session = Depends(get_db),
+    auth: dict = Depends(get_auth_headers),
+):
+    tenant_id = auth["tenant_id"]
     try:
-        query = db.query(ChatHistory).filter(ChatHistory.session_id == session_id)
+        query = db.query(ChatHistory).filter(
+            ChatHistory.session_id == session_id,
+            ChatHistory.tenant_id == tenant_id
+        )
         if query.count() == 0:
             raise HTTPException(status_code=404, detail="Session not found.")
         query.delete(synchronize_session=False)
