@@ -19,9 +19,11 @@
 
 ## 核心能力
 
-### 1. API Key 映射的多租户隔离
+### 1. JWT 登录与多租户权限隔离
 
-系统通过 `X-API-Key` 请求头识别用户身份，后端在 PostgreSQL 的 `api_key_maps` 表中查询对应的 `tenant_id` 和 `user_id`，再将租户信息注入到文档管理、向量检索、BM25 缓存和历史会话查询中。
+系统以 JWT 登录鉴权为主：用户注册/登录后，后端签发 `Authorization: Bearer <JWT>`，并从服务端用户表中解析当前用户的 `tenant_id` 和 `user_id`，再将租户信息注入到文档管理、向量检索、BM25 缓存和历史会话查询中。
+
+`X-API-Key` 仅作为兼容旧版评测脚本和历史演示入口保留，不作为主认证链路。生产化场景应统一收敛到 JWT / Session / 企业 SSO 等认证体系。
 
 ```mermaid
 sequenceDiagram
@@ -29,8 +31,8 @@ sequenceDiagram
     participant Auth as core/auth.py
     participant DB as PostgreSQL
     participant RAG as RAGEngine
-    Client->>Auth: X-API-Key
-    Auth->>DB: 查询 APIKeyMap
+    Client->>Auth: Authorization Bearer JWT
+    Auth->>DB: 查询 User
     DB-->>Auth: tenant_id / user_id
     Auth->>RAG: 注入租户上下文
     RAG->>RAG: Chroma metadata filter + tenant BM25
@@ -42,9 +44,9 @@ sequenceDiagram
 - 文档记录表按 `tenant_id` 过滤。
 - ChromaDB 写入和检索时带 `tenant_id` metadata。
 - BM25 按租户单独持久化为 `bm25_{tenant_id}.pkl`。
-- 历史会话列表和详情按 `tenant_id` 查询。
+- 历史会话列表和详情按 `tenant_id + user_id` 双重过滤。
 
-该实现适合项目演示和实习简历展示；生产环境还需要密钥哈希、过期时间、权限角色、审计日志和更完整的认证体系。
+该实现适合项目演示和实习简历展示；生产环境还需要角色权限、审计日志、密钥轮换、限流和更完整的认证体系。
 
 ### 2. 混合检索与重排序
 
@@ -99,7 +101,7 @@ sequenceDiagram
 ```mermaid
 graph TD
     A[用户提问] --> B[FastAPI /api/v1/chat]
-    B --> Auth[API Key 鉴权与租户识别]
+    B --> Auth[JWT 鉴权与租户识别]
     Auth --> C{语义路由}
     C -->|知识库问题| D[Query Rewriting]
     C -->|闲聊/无关问题| E[轻量模型直接回复]
@@ -128,7 +130,7 @@ graph TD
 | 关键词检索 | BM25Retriever |
 | 结果重排 | FlashrankRerank |
 | 关系型数据库 | PostgreSQL, SQLAlchemy |
-| 权限隔离 | API Key, tenant_id |
+| 权限隔离 | JWT, user_id, tenant_id |
 | 评测 | RAGAS, 自定义 15 问测试集 |
 | 可观测性 | LangSmith Trace |
 | 前端 | Streamlit |
@@ -145,7 +147,7 @@ Enterprise_RAG/
 │   ├── chat_routes.py       # 流式问答、历史会话接口
 │   └── admin_routes.py      # 文档上传、列表、清空接口
 ├── core/
-│   ├── auth.py              # API Key 鉴权与租户识别
+│   ├── auth.py              # JWT 鉴权、兼容旧版 API Key
 │   ├── config.py            # 环境变量配置与 LangSmith 环境同步
 │   ├── crud.py              # 数据库 CRUD
 │   ├── database.py          # SQLAlchemy 连接与初始化
@@ -239,21 +241,24 @@ streamlit run web_app.py
 
 ## API 概览
 
-业务接口需要携带 `X-API-Key` 请求头。系统初始化时会写入演示用 Key：
+系统已升级为 **统一 SSO 去中心化 JWT Token 鉴权体系**。客户端需要在 Header 中携带 `Authorization: Bearer <JWT_Token>`。
 
-- `key_company_a`：绑定 `tenant_company_A`。
-- `key_company_b`：绑定 `tenant_company_B`。
-- `key_default`：绑定 `default_tenant`。
-
+### 1. 统一认证接口
 | 方法 | 路径 | 说明 |
 | :--- | :--- | :--- |
-| `POST` | `/api/v1/chat` | 流式 RAG 问答 |
-| `POST` | `/api/v1/upload` | 上传并索引文档 |
-| `GET` | `/api/v1/list` | 查看当前租户文档列表 |
-| `DELETE` | `/api/v1/clear` | 清空当前租户知识库和历史 |
-| `GET` | `/api/v1/sessions` | 查看当前租户会话列表 |
-| `GET` | `/api/v1/history/{session_id}` | 查看指定会话历史 |
-| `DELETE` | `/api/v1/history/{session_id}` | 删除指定会话 |
+| `POST` | `/api/v1/auth/register` | 用户注册 (用户名限制为字母/数字/下划线/连字符 2-50 位) |
+| `POST` | `/api/v1/auth/login` | 用户登录 (密码哈希比对并签发 JWT SSO Token) |
+
+### 2. 知识库与聊天接口
+| 方法 | 路径 | 说明 |
+| :--- | :--- | :--- |
+| `POST` | `/api/v1/chat` | 流式 RAG 问答 (屏蔽前端 history 参数，一律后端强制查库) |
+| `POST` | `/api/v1/upload` | 隔离上传文档 (UUID 重命名防穿越落盘) |
+| `GET` | `/api/v1/list` | 查看当前租户已索引的文档列表 |
+| `DELETE` | `/api/v1/clear` | 清空当前租户知识库和所有会话历史 |
+| `GET` | `/api/v1/sessions` | 查看当前租户及对应用户的会话列表 |
+| `GET` | `/api/v1/history/{session_id}` | 查看指定会话的历史记录 (用户级强隔离) |
+| `DELETE` | `/api/v1/history/{session_id}` | 删除指定会话 (含数据库级联删除) |
 
 ---
 
@@ -284,8 +289,34 @@ RAGAS 评测用于观察回答忠实度、答案相关性和上下文召回率�
 
 ---
 
+## 🛡️ 安全加固与越权测试审计
+
+为了达到企业级准生产的安全性标准，本项目实施了六大纵深加固防线，能够抵御各类路径穿越、身份假冒与越权注入风险。
+
+### 1. 六大纵深防御防线
+- **用户名强格式正则**：注册用户名仅允许 `^[a-zA-Z0-9_-]{2,50}$`，杜绝通过特殊字符造成路径穿越或 SQL 注入。
+- **上传物理 UUID 重命名**：物理落盘时剥离目录前缀，采用 `uuid.uuid4().hex` 作为物理文件名，防范恶意穿越覆盖系统敏感文件。
+- **用户级历史强隔离**：聊天历史记录的拉取和删除在 SQL 层面绑定 `user_id` 过滤，消除同一租户不同用户对话历史串色风险。
+- **屏蔽前端 history 传入**：彻底废除对前端请求体内历史聊天上下文的直接采用，全部由后端从 PostgreSQL 数据库提取，防御对话内容伪造。
+- **会话关系物理表硬校验** (Agent 端)：在 Postgres 数据库建立 `agent_sessions` 关系表，每次对话、拉取及删除时均查表强校验归属。
+- **文件绝对路径 resolve 校验** (Agent 端)：CSV 物理文件访问时，采用 `Path.resolve().is_relative_to` 精准校验隔离范围，杜绝 `../` 回退绕过。
+
+### 2. 自动化越权渗透测试脚本
+项目在仓库内置了一键自动化集成渗透测试脚本：`scripts/test_security.py`。该脚本可自动对上述漏洞防线发起模拟渗透攻击：
+- **运行测试**：
+  ```bash
+  python scripts/test_security.py
+  ```
+- **越权测试机制**：
+  1. 尝试以非法字符/路径符号注册用户，检验**格式校验器阻断率**；
+  2. 尝试以上传包含 `../../` 的恶意文件，检验**上传文件物理名净化及重命名存盘**；
+  3. 用户 B 尝试调用 API 强行获取用户 A 的 `session_id` 对话历史，检验**数据库用户级强隔离**；
+  4. 用户 B 假冒用户 A 的 thread_id 前缀或跨越其 uploads 隔离目录（`../`）读取文件，检验 **Postgres 关系表拦截率** 与 **Path.resolve 路径隔离阻断率**。
+
+---
+
 ## 安全与上传说明
 
 - `.env`、`data/`、`.venv/`、`__pycache__/` 等目录已在 `.gitignore` 中忽略。
 - 上传 GitHub 前请确认没有提交真实 API Key、数据库密码或私有文档。
-- 本项目的 API Key 隔离用于演示多租户思路，生产环境应增加密钥哈希、权限角色、审计日志和密钥轮换机制。
+- 本项目已全面升级为去中心化 JWT SSO 认证的多维度隔离架构，为企业生产级多租户开发提供了标准工业界设计思路。

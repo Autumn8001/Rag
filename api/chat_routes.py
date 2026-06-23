@@ -20,9 +20,9 @@ from sqlalchemy.orm import Session
 
 from core.database import get_db
 from core.crud import create_chat_record, get_chat_history
-from core.models import ChatHistory
+from core.models import ChatHistory, User
 from core.rag_engine import stream_rag_answer
-from core.auth import get_auth_headers
+from core.auth import get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ async def health_check():
 async def chat_endpoint(
     request: ChatRequest,
     db: Session = Depends(get_db),
-    auth: dict = Depends(get_auth_headers),
+    current_user: User = Depends(get_current_user),
 ):
     """
     接收用户问题，通过 RAG 流水线生成答案并以 SSE 流式返回。
@@ -54,16 +54,17 @@ async def chat_endpoint(
     """
     user_question = request.question.strip()
     session_id = request.session_id or str(uuid.uuid4())
-    tenant_id = auth["tenant_id"]
-    user_id = auth["user_id"]
+    tenant_id = current_user.tenant_id
+    user_id = current_user.username
 
-    history = request.history
-    if history is None:
-        records = get_chat_history(db, session_id=session_id, tenant_id=tenant_id, limit=5)
-        history = []
-        for record in records:
-            history.append({"role": "user", "content": record.user_query})
-            history.append({"role": "assistant", "content": record.ai_response})
+    # 🛡️ 安全防御：屏蔽前端传入的 history 伪造漏洞，聊天历史一律通过后端数据库加载
+    records = get_chat_history(
+        db, session_id=session_id, tenant_id=tenant_id, user_id=user_id, limit=5
+    )
+    history = []
+    for record in records:
+        history.append({"role": "user", "content": record.user_query})
+        history.append({"role": "assistant", "content": record.ai_response})
 
     async def stream_generator():
         full_response = ""
@@ -89,16 +90,18 @@ async def chat_endpoint(
 @router.get("/sessions", summary="List recent chat sessions")
 async def get_chat_sessions(
     db: Session = Depends(get_db),
-    auth: dict = Depends(get_auth_headers),
+    current_user: User = Depends(get_current_user),
 ):
-    tenant_id = auth["tenant_id"]
+    """获取当前用户的历史会话列表（加入 user_id 强隔离）。"""
+    tenant_id = current_user.tenant_id
+    user_id = current_user.username
     try:
         latest_records = (
             db.query(
                 ChatHistory.session_id,
                 func.max(ChatHistory.created_at).label("latest_at"),
             )
-            .filter(ChatHistory.tenant_id == tenant_id)
+            .filter(and_(ChatHistory.tenant_id == tenant_id, ChatHistory.user_id == user_id))
             .group_by(ChatHistory.session_id)
             .subquery()
         )
@@ -112,7 +115,7 @@ async def get_chat_sessions(
                     ChatHistory.created_at == latest_records.c.latest_at,
                 ),
             )
-            .filter(ChatHistory.tenant_id == tenant_id)
+            .filter(and_(ChatHistory.tenant_id == tenant_id, ChatHistory.user_id == user_id))
             .order_by(ChatHistory.created_at.desc())
             .limit(50)
             .all()
@@ -140,15 +143,20 @@ async def get_chat_sessions(
 async def get_session_history(
     session_id: str,
     db: Session = Depends(get_db),
-    auth: dict = Depends(get_auth_headers),
+    current_user: User = Depends(get_current_user),
 ):
-    tenant_id = auth["tenant_id"]
+    """获取指定会话的完整对话记录（加入 user_id 和 tenant_id 双重校验防止越权）。"""
+    tenant_id = current_user.tenant_id
+    user_id = current_user.username
     try:
         records = (
             db.query(ChatHistory)
             .filter(
-                ChatHistory.session_id == session_id,
-                ChatHistory.tenant_id == tenant_id
+                and_(
+                    ChatHistory.session_id == session_id,
+                    ChatHistory.tenant_id == tenant_id,
+                    ChatHistory.user_id == user_id
+                )
             )
             .order_by(ChatHistory.created_at.asc())
             .all()
@@ -166,13 +174,18 @@ async def get_session_history(
 async def delete_session_history(
     session_id: str,
     db: Session = Depends(get_db),
-    auth: dict = Depends(get_auth_headers),
+    current_user: User = Depends(get_current_user),
 ):
-    tenant_id = auth["tenant_id"]
+    """删除指定会话记录（加入 user_id 强隔离）。"""
+    tenant_id = current_user.tenant_id
+    user_id = current_user.username
     try:
         query = db.query(ChatHistory).filter(
-            ChatHistory.session_id == session_id,
-            ChatHistory.tenant_id == tenant_id
+            and_(
+                ChatHistory.session_id == session_id,
+                ChatHistory.tenant_id == tenant_id,
+                ChatHistory.user_id == user_id
+            )
         )
         if query.count() == 0:
             raise HTTPException(status_code=404, detail="Session not found.")

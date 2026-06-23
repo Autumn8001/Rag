@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     LANGSMITH_API_KEY: str | None = None
     LANGCHAIN_PROJECT: str = "enterprise-rag"
     LANGSMITH_PROJECT: str | None = None
+
+    # JWT 统一认证配置
+    JWT_SECRET_KEY: str = "enterprise-rag-super-secret-key-change-it-in-production"
+    JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
+
     model_config = SettingsConfigDict(
         env_file=BASE_DIR / ".env",
         env_file_encoding="utf-8",

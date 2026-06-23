@@ -76,4 +76,17 @@ class APIKeyMap(Base):
     api_key = Column(String, unique=True, index=True, nullable=False)
     tenant_id = Column(String, index=True, nullable=False)
     user_id = Column(String, index=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.now)
+
+
+# ==========================================
+# 👤 第四张表：用户注册/登录凭证与租户关系表 (统一鉴权核心)
+# ==========================================
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, index=True, nullable=False)  # 登录用户名，唯一
+    hashed_password = Column(String, nullable=False)                    # 强加密哈希密码
+    tenant_id = Column(String, index=True, nullable=False)              # 所属隔离租户 ID
     created_at = Column(DateTime, default=datetime.now)

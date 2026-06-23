@@ -1,5 +1,4 @@
 import os
-
 import streamlit as st
 import requests
 import uuid
@@ -9,12 +8,13 @@ API_BASE = os.environ.get("API_BASE", "http://localhost:8000/api/v1")
 PAGE_SIZE = 10
 
 
-
 @st.cache_data(ttl=10)
-def fetch_sessions(api_key: str):
-    """缓存历史会话列表，10 秒内不重复请求。"""
+def fetch_sessions(jwt_token: str | None):
+    """缓存历史会话列表，基于 jwt_token 隔离缓存。"""
+    if not jwt_token:
+        return []
     try:
-        headers = {"X-API-Key": api_key}
+        headers = {"Authorization": f"Bearer {jwt_token}"}
         res = requests.get(f"{API_BASE}/sessions", headers=headers, timeout=5)
         if res.status_code == 200:
             return res.json().get("data", [])
@@ -24,10 +24,12 @@ def fetch_sessions(api_key: str):
 
 
 @st.cache_data(ttl=10)
-def fetch_kb_list(page: int, page_size: int, api_key: str):
-    """缓存知识库列表，10 秒内不重复请求。"""
+def fetch_kb_list(page: int, page_size: int, jwt_token: str | None):
+    """缓存知识库列表，基于 jwt_token 隔离缓存。"""
+    if not jwt_token:
+        return None
     try:
-        headers = {"X-API-Key": api_key}
+        headers = {"Authorization": f"Bearer {jwt_token}"}
         res = requests.get(
             f"{API_BASE}/list",
             params={"page": page, "page_size": page_size},
@@ -41,24 +43,24 @@ def fetch_kb_list(page: int, page_size: int, api_key: str):
     return None
 
 st.set_page_config(
-    page_title="智能知识库助手",
-    page_icon="",
+    page_title="企业多租户智能知识库",
+    page_icon="📚",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 st.markdown("""
 <style>
-/* ── 只隐藏必要元素，不动 header 结构 ── */
+/* ── 隐藏必要多余元素，保持精美 ── */
 #MainMenu { visibility: hidden; }
 footer { visibility: hidden; }
 .stDeployButton { display: none; }
 
-/* ── 背景 ── */
+/* ── 极简 Claude 质感背景底色 ── */
 .stApp { background-color: #f5f4ef; }
 .main { background-color: #f5f4ef; }
 
-/* ── 侧边栏 ── */
+/* ── 侧边栏（Sidebar）美化 ── */
 section[data-testid="stSidebar"] {
     background: #ffffff;
     border-right: 1px solid #e8e8e8;
@@ -67,7 +69,7 @@ section[data-testid="stSidebar"] > div:first-child {
     padding: 20px 14px;
 }
 
-/* ── 按钮 ── */
+/* ── 按钮样式重构（圆角、过渡） ── */
 .stButton > button {
     border-radius: 10px;
     border: 1px solid #e5e5e5;
@@ -76,14 +78,15 @@ section[data-testid="stSidebar"] > div:first-child {
     font-size: 13px;
     transition: all 0.15s;
     text-align: left;
+    padding: 8px 12px;
 }
 .stButton > button:hover {
     background: #f5f5f5;
     border-color: #ccc;
 }
 
-/* ── 文本输入框 ── */
-[data-testid="stTextInput"] input {
+/* ── 输入框美化 ── */
+[data-testid="stTextInput"] input, [data-testid="stPasswordInput"] input {
     background: white !important;
     border: 1px solid #e8e8e8 !important;
     border-radius: 8px !important;
@@ -91,12 +94,8 @@ section[data-testid="stSidebar"] > div:first-child {
     color: #333 !important;
     box-shadow: none !important;
 }
-[data-testid="stTextInput"] input:focus {
-    border-color: #ccc !important;
-    box-shadow: none !important;
-}
 
-/* ── 聊天输入框 ── */
+/* ── 底部聊天输入框扁平化 ── */
 [data-testid="stChatInput"] {
     background: #efefef !important;
     border-radius: 16px !important;
@@ -124,32 +123,23 @@ section[data-testid="stSidebar"] > div:first-child {
 [data-testid="stChatInput"] button:hover {
     background: #1a1a1a !important;
 }
-[data-testid="stChatInput"] button svg {
-    fill: white !important;
-    color: white !important;
-}
 
-/* ── 聊天消息 ── */
+/* ── 隐藏原生消息卡片边框 ── */
 [data-testid="stChatMessage"] {
     background: transparent !important;
     border: none !important;
     box-shadow: none !important;
 }
 
-/* ── Expander ── */
+/* ── 展开/折叠面板 ── */
 [data-testid="stExpander"] {
     background: white !important;
     border: 1px solid #e8e8e8 !important;
     border-radius: 10px !important;
     box-shadow: none !important;
 }
-[data-testid="stExpander"] summary {
-    color: #444 !important;
-    font-size: 13px !important;
-    font-weight: 500 !important;
-}
 
-/* ── Metric ── */
+/* ── 指标卡片 ── */
 [data-testid="stMetric"] {
     background: white;
     border-radius: 10px;
@@ -159,50 +149,7 @@ section[data-testid="stSidebar"] > div:first-child {
 [data-testid="stMetricValue"] { color: #1a1a1a !important; }
 [data-testid="stMetricLabel"] { color: #999 !important; }
 
-/* ── Dataframe ── */
-[data-testid="stDataFrame"] {
-    background: white;
-    border-radius: 10px;
-    border: 1px solid #ebebeb;
-    overflow: hidden;
-}
-
-/* ── 通知消息 ── */
-[data-testid="stAlert"] {
-    border-radius: 10px !important;
-    border: none !important;
-    font-size: 13px !important;
-}
-
-/* ── 文件上传 ── */
-[data-testid="stFileUploader"] {
-    background: white;
-    border-radius: 10px;
-    border: 1px dashed #ddd;
-    padding: 4px;
-}
-[data-testid="stFileUploader"] section {
-    background: transparent !important;
-    border: none !important;
-}
-
-/* ── Divider ── */
-hr { border-color: #ebebeb !important; margin: 10px 0 !important; }
-
-/* ── Caption ── */
-.stCaption, [data-testid="stCaptionContainer"] {
-    color: #bbb !important;
-    font-size: 11px !important;
-}
-
-/* ── 主区域 ── */
-.main .block-container {
-    max-width: 860px;
-    padding: 2rem 2rem 5rem;
-    margin: 0 auto;
-}
-
-/* ── 侧边栏标签 ── */
+/* ── 侧边栏字体标签 ── */
 .sidebar-label {
     font-size: 10px;
     font-weight: 700;
@@ -212,58 +159,124 @@ hr { border-color: #ebebeb !important; margin: 10px 0 !important; }
     margin: 16px 0 8px 2px;
 }
 
-/* ── 功能卡片 ── */
-.feature-card {
-    background: white;
+/* ── 主阅读区居中宽度 ── */
+.main .block-container {
+    max-width: 860px;
+    padding: 2rem 2rem 5rem;
+    margin: 0 auto;
+}
+
+/* ── 认证卡片美化 ── */
+.auth-container {
+    background-color: white;
     border-radius: 16px;
-    padding: 28px 24px;
+    padding: 40px;
     border: 1px solid #ebebeb;
-    min-height: 140px;
+    max-width: 420px;
+    margin: 80px auto 0;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.02);
 }
 </style>
 """, unsafe_allow_html=True)
 
-# ── Session State ─────────────────────────────────────────────────────────────
+# ── Session State 初始化 ──────────────────────────────────────────────────────
 defaults = {
     "session_id": str(uuid.uuid4()),
     "messages": [],
     "show_clear_confirm": False,
     "show_kb_details": False,
     "kb_page": 1,
-    "api_key": "key_default",
+    "jwt_token": None,
+    "username": None,
+    "tenant_id": None,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
-# ── Helper Headers ────────────────────────────────────────────────────────────
 def get_auth_headers():
-    return {
-        "X-API-Key": st.session_state.api_key,
-    }
+    if st.session_state.jwt_token:
+        return {"Authorization": f"Bearer {st.session_state.jwt_token}"}
+    return {}
 
-# ── 侧边栏 ────────────────────────────────────────────────────────────────────
+# ── 1. 登录/注册拦截机制 ──────────────────────────────────────────────────────
+if not st.session_state.jwt_token:
+    st.markdown("<div style='text-align:center;padding-top:40px;'><h2>📚 欢迎使用企业级多租户 RAG 知识库</h2><p style='color:#666;'>请登录或注册以获得隔离的专属租户空间</p></div>", unsafe_allow_html=True)
+    
+    # 居中认证表单
+    c1, c2, c3 = st.columns([1, 1.5, 1])
+    with c2:
+        st.markdown("<div class='auth-container'>", unsafe_allow_html=True)
+        tab1, tab2 = st.tabs(["🔑 租户登录", "👤 新建用户"])
+        
+        with tab1:
+            login_username = st.text_input("用户名", key="login_user")
+            login_password = st.text_input("密码", type="password", key="login_pwd")
+            if st.button("立即登录", use_container_width=True, key="login_btn"):
+                if not login_username or not login_password:
+                    st.error("请输入用户名和密码。")
+                else:
+                    try:
+                        r = requests.post(
+                            f"{API_BASE}/auth/login",
+                            json={"username": login_username, "password": login_password},
+                            timeout=5
+                        )
+                        if r.status_code == 200:
+                            data = r.json()
+                            st.session_state.jwt_token = data["access_token"]
+                            st.session_state.username = data["username"]
+                            st.session_state.tenant_id = data["tenant_id"]
+                            st.session_state.session_id = str(uuid.uuid4())
+                            st.session_state.messages = []
+                            st.success("登录成功，正在进入工作空间...")
+                            st.rerun()
+                        else:
+                            st.error(f"登录失败: {r.json().get('detail', '未知错误')}")
+                    except Exception as e:
+                        st.error(f"连接认证服务失败: {e}")
+                        
+        with tab2:
+            reg_username = st.text_input("注册用户名", key="reg_user")
+            reg_password = st.text_input("设置登录密码 (≥6位)", type="password", key="reg_pwd")
+            if st.button("创建账户并获取专属租户", use_container_width=True, key="reg_btn"):
+                if not reg_username or not reg_password:
+                    st.error("请输入欲注册的用户名及密码。")
+                elif len(reg_password) < 6:
+                    st.error("密码长度必须在 6 位以上。")
+                else:
+                    try:
+                        r = requests.post(
+                            f"{API_BASE}/auth/register",
+                            json={"username": reg_username, "password": reg_password},
+                            timeout=5
+                        )
+                        if r.status_code == 201:
+                            st.success("注册成功！请切换到【租户登录】页签登录您的专属空间。")
+                        else:
+                            st.error(f"注册失败: {r.json().get('detail', '账号已被占用')}")
+                    except Exception as e:
+                        st.error(f"连接认证服务失败: {e}")
+        st.markdown("</div>", unsafe_allow_html=True)
+    st.stop()
+
+# ── 2. 已登录 - 侧边栏布局与会话切换 ───────────────────────────────────────────
 with st.sidebar:
-    st.markdown("""
+    st.markdown(f"""
     <div style="display:flex;align-items:center;gap:10px;padding-bottom:16px;border-bottom:1px solid #f0f0f0;">
-        <div style="width:28px;height:28px;background:linear-gradient(135deg,#ff6b9d,#c44dff);border-radius:50%;flex-shrink:0;"></div>
+        <div style="width:28px;height:28px;background:linear-gradient(135deg,#4caf50,#81c784);border-radius:50%;flex-shrink:0;"></div>
         <div>
-            <div style="font-size:13px;font-weight:700;color:#1a1a1a;">智能知识库助手</div>
-            <div style="font-size:11px;color:#666;">基于大模型的文档问答系统</div>
+            <div style="font-size:13px;font-weight:700;color:#1a1a1a;">已登录：{st.session_state.username}</div>
+            <div style="font-size:10px;color:#888;">租户: {st.session_state.tenant_id[:16]}...</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # API 密钥配置部分
-    st.markdown('<div class="sidebar-label">安全凭证配置</div>', unsafe_allow_html=True)
-    a_key = st.text_input("API 密钥 (API Key)", value=st.session_state.api_key, key="api_key_input")
-    
-    # 检测到配置变更时重置聊天状态并强制刷新
-    if a_key != st.session_state.api_key:
-        st.session_state.api_key = a_key
-        st.session_state.session_id = str(uuid.uuid4())
+    if st.button("🚪 退出登录", use_container_width=True):
+        st.session_state.jwt_token = None
+        st.session_state.username = None
+        st.session_state.tenant_id = None
         st.session_state.messages = []
-        st.session_state.show_kb_details = False
         st.rerun()
 
     if st.button("+ 新对话", use_container_width=True):
@@ -279,14 +292,19 @@ with st.sidebar:
         label_visibility="collapsed", key="history_search"
     )
 
-    sessions = fetch_sessions(st.session_state.api_key)
+    sessions = fetch_sessions(st.session_state.jwt_token)
     if search_query:
         sessions = [s for s in sessions if search_query.lower() in s.get("title", "").lower()]
     if not sessions:
         st.caption("暂无历史对话")
     else:
         for s in sessions:
-            if st.button(s["title"], key=s["session_id"], use_container_width=True):
+            title = s["title"]
+            is_active = s["session_id"] == st.session_state.session_id
+            btn_label = f"💬 {title}"
+            if is_active:
+                btn_label = f"📝 {title} (当前)"
+            if st.button(btn_label, key=s["session_id"], use_container_width=True):
                 st.session_state.session_id = s["session_id"]
                 st.session_state.show_kb_details = False
                 try:
@@ -303,8 +321,8 @@ with st.sidebar:
 
     st.divider()
 
-    with st.expander("管理选项"):
-        st.markdown('<div class="sidebar-label">知识库</div>', unsafe_allow_html=True)
+    with st.expander("🛠️ 管理选项"):
+        st.markdown('<div class="sidebar-label">专属知识库</div>', unsafe_allow_html=True)
         uploaded_file = st.file_uploader(
             "上传文档",
             type=["pdf", "docx", "doc", "md", "txt"],
@@ -312,7 +330,7 @@ with st.sidebar:
         )
         st.caption("支持 PDF、DOC、MD、TXT 格式")
         if uploaded_file and st.button("上传入库", use_container_width=True):
-            with st.spinner(f"正在上传 {uploaded_file.name}..."):
+            with st.spinner(f"正在上传并做租户级隔离切片 {uploaded_file.name}..."):
                 try:
                     files = {"file": (uploaded_file.name, uploaded_file, uploaded_file.type)}
                     r = requests.post(
@@ -326,8 +344,7 @@ with st.sidebar:
                         if result.get("status") == "skipped":
                             st.warning(result["message"])
                         else:
-                            st.success(f"{uploaded_file.name} 上传成功")
-                            # 上传成功后清除 kb 列表的缓存，让其立刻刷新
+                            st.success(f"{uploaded_file.name} 已隔离上传成功")
                             fetch_kb_list.clear()
                     else:
                         st.error(f"上传失败: {r.status_code}")
@@ -336,12 +353,12 @@ with st.sidebar:
                 except Exception as e:
                     st.error(str(e))
 
-        st.markdown('<div class="sidebar-label">数据库</div>', unsafe_allow_html=True)
-        if st.button("查看知识库详情", use_container_width=True):
+        st.markdown('<div class="sidebar-label">隔离审计</div>', unsafe_allow_html=True)
+        if st.button("查看当前租户已存文档", use_container_width=True):
             st.session_state.show_kb_details = not st.session_state.show_kb_details
             st.rerun()
 
-        if st.button("健康检查", use_container_width=True):
+        if st.button("运行状态探测", use_container_width=True):
             with st.spinner("检查中..."):
                 try:
                     r = requests.get(
@@ -350,7 +367,7 @@ with st.sidebar:
                         timeout=5
                     )
                     if r.status_code == 200:
-                        st.success("服务运行正常")
+                        st.success("服务连接正常")
                         with st.expander("查看详情"):
                             st.json(r.json())
                     else:
@@ -362,7 +379,7 @@ with st.sidebar:
             st.session_state.show_clear_confirm = True
 
         if st.session_state.show_clear_confirm:
-            st.warning("此操作不可恢复，确认清空该租户下的知识库？")
+            st.warning("此操作不可恢复，确认物理清空您租户空间下的所有数据？")
             c1, c2 = st.columns(2)
             with c1:
                 if st.button("确认", key="confirm_clear"):
@@ -373,7 +390,7 @@ with st.sidebar:
                             timeout=30
                         )
                         if r.status_code == 200:
-                            st.success("该租户知识库已清空")
+                            st.success("租户数据已全部物理清空")
                             st.session_state.messages = []
                             st.session_state.show_clear_confirm = False
                             fetch_kb_list.clear()
@@ -387,13 +404,13 @@ with st.sidebar:
                     st.session_state.show_clear_confirm = False
                     st.rerun()
 
-# ── 主区域 ────────────────────────────────────────────────────────────────────
+# ── 3. 主区域内容展示 ──────────────────────────────────────────────────────────
 if st.session_state.show_kb_details:
-    st.markdown("### 知识库详情")
+    st.markdown("### 🔍 专属隔离知识库清单")
     data = fetch_kb_list(
         st.session_state.kb_page,
         PAGE_SIZE,
-        st.session_state.api_key
+        st.session_state.jwt_token
     )
     if data:
         kb_data = data.get("data", [])
@@ -401,10 +418,10 @@ if st.session_state.show_kb_details:
         total_pages = data.get("total_pages", 1)
         if total_items > 0:
             c1, c2, c3 = st.columns(3)
-            c1.metric("文件总数", total_items)
-            c2.metric("当前页码", f"{st.session_state.kb_page} / {total_pages}")
-            c3.metric("本页数量", len(kb_data))
-            st.dataframe(pd.DataFrame(kb_data), use_container_width=True, height=300)
+            c1.metric("文件总数 (当前租户)", total_items)
+            c2.metric("分页列表", f"{st.session_state.kb_page} / {total_pages}")
+            c3.metric("本页载入行", len(kb_data))
+            st.dataframe(pd.DataFrame(kb_data), use_container_width=True, height=250)
             b1, b2, b3 = st.columns([1, 1, 2])
             with b1:
                 if st.button("上一页", disabled=st.session_state.kb_page <= 1):
@@ -417,22 +434,23 @@ if st.session_state.show_kb_details:
                     fetch_kb_list.clear()
                     st.rerun()
             with b3:
-                if st.button("收起"):
+                if st.button("收起面板"):
                     st.session_state.show_kb_details = False
                     st.rerun()
         else:
-            st.info("该租户下的知识库为空，请先上传文档")
-            if st.button("收起"):
+            st.info("您专属的知识库暂时为空，请在侧边栏上传文档。")
+            if st.button("收起面板"):
                 st.session_state.show_kb_details = False
                 st.rerun()
     else:
-        st.error("加载失败，请检查后端服务")
+        st.error("加载列表失败，请检查后端服务")
     st.divider()
 
 if not st.session_state.messages:
-    st.markdown("""
+    st.markdown(f"""
     <div style="text-align:center;padding:120px 0 60px;">
         <h1 style="font-size:2.4rem;font-weight:700;color:#2d2d2d;margin-bottom:14px;letter-spacing:-0.5px;">智能知识库助手</h1>
+        <p style="color:#666;font-size:14px;">已为租户 <span style="font-family:monospace;color:#1e88e5;font-weight:600;">{st.session_state.tenant_id}</span> 建立专属加密沙箱通道</p>
     </div>
     """, unsafe_allow_html=True)
 else:
@@ -440,7 +458,7 @@ else:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-if prompt := st.chat_input("向知识库提问，或者和我聊聊天..."):
+if prompt := st.chat_input("向专属知识库提问，或者和 AI 聊聊天..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
@@ -463,9 +481,8 @@ if prompt := st.chat_input("向知识库提问，或者和我聊聊天..."):
                     placeholder.markdown(full_response + "▌")
             placeholder.markdown(full_response)
             st.session_state.messages.append({"role": "assistant", "content": full_response})
-            # 刷新会话缓存以立刻显示在历史对话列表中
             fetch_sessions.clear()
         except requests.exceptions.Timeout:
-            st.error("请求超时，请稍后重试")
+            st.error("RAG 后端检索答复超时")
         except Exception as e:
-            st.error(f"请求失败: {str(e)}")
+            st.error(f"网络异常，请求失败: {str(e)}")

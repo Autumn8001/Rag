@@ -59,13 +59,14 @@ def create_chat_record(db: Session, session_id: str, user_query: str, ai_respons
     return db_chat
 
 
-def get_chat_history(db: Session, session_id: str, tenant_id: str, limit: int = 5):
+def get_chat_history(db: Session, session_id: str, tenant_id: str, user_id: str, limit: int = 5):
     """
-    【查】：获取滑动窗口记忆！且限制仅能获取当前租户的历史记录。
+    【查】：获取滑动窗口记忆！且限制仅能获取当前租户及对应用户的历史记录（用户级强隔离）。
     """
     records = db.query(ChatHistory).filter(
         ChatHistory.session_id == session_id,
-        ChatHistory.tenant_id == tenant_id
+        ChatHistory.tenant_id == tenant_id,
+        ChatHistory.user_id == user_id
     ).order_by(
         ChatHistory.created_at.desc()
     ).limit(limit).all()

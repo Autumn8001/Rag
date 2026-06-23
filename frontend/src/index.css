@@ -1,0 +1,191 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap');
+
+:root {
+  /* 🎨 Claude 官网温润燕麦色与赤陶红极简设计系统 */
+  --bg-primary: #f9f6f0;       /* 经典温润燕麦白 */
+  --bg-secondary: #f3efe6;     /* 温暖沙质灰 */
+  --panel-glass: #ffffff;      /* 象牙纯白卡片 */
+  --border-glass: #e5dec9;     /* 浅陶泥色纤细边框 */
+  --border-focus: #cc5c3b;     /* Claude 标志性赤红聚焦线 */
+  
+  --text-primary: #191919;     /* 极深可可黑 */
+  --text-secondary: #656461;   /* 暖茶灰 */
+  --text-muted: #9e9d99;       /* 灰泥茶色 */
+  
+  /* 专属点缀色 */
+  --color-primary: #d97753;    /* 经典赤陶色 Terracotta */
+  --color-secondary: #e06a4b;  /* 浅茶橙 */
+  --color-accent: #a37535;     /* 莫兰迪古铜金 */
+  --color-success: #3c7a5a;    /* 鼠尾草绿 */
+  --color-danger: #c75a4e;     /* 锈红 */
+  
+  /* 精美过渡与质感阴影 */
+  --transition-smooth: all 0.2s ease-in-out;
+  --shadow-neon: 0 4px 12px rgba(217, 119, 83, 0.08);
+  --shadow-glass: 0 4px 24px rgba(25, 25, 25, 0.03), 0 1px 2px rgba(0, 0, 0, 0.02);
+  
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  color-scheme: light;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  overflow: hidden;
+  background-color: var(--bg-primary);
+  background-image: 
+    radial-gradient(circle at 10% 20%, rgba(217, 119, 83, 0.03) 0%, transparent 40%),
+    radial-gradient(circle at 90% 80%, rgba(163, 117, 53, 0.02) 0%, transparent 45%);
+  min-height: 100vh;
+}
+
+/* 🎨 移除酷炫流光背景，改为 Claude 优雅低调的毛砂颗粒纸张质感背景 */
+.nebula-bg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: -1;
+  opacity: 0.15;
+  background-image: radial-gradient(var(--border-glass) 1px, transparent 0);
+  background-size: 24px 24px;
+}
+
+/* 💎 Claude 纯白儒雅卡片 */
+.glass-card {
+  background: var(--panel-glass);
+  border: 1px solid var(--border-glass);
+  border-radius: 12px;
+  box-shadow: var(--shadow-glass);
+  transition: var(--transition-smooth);
+}
+
+.glass-card:hover {
+  border-color: rgba(217, 119, 83, 0.25);
+  box-shadow: 0 8px 32px rgba(25, 25, 25, 0.05);
+}
+
+/* ⌨️ 温润灰呼吸输入框 */
+.neon-input {
+  width: 100%;
+  padding: 12px 16px;
+  background: #ffffff;
+  border: 1.5px solid var(--border-glass);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 14px;
+  outline: none;
+  transition: var(--transition-smooth);
+}
+
+.neon-input:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(217, 119, 83, 0.15);
+}
+
+/* 🚀 赤陶色按钮 */
+.neon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 24px;
+  background: var(--color-primary);
+  border: none;
+  border-radius: 8px;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: var(--transition-smooth);
+  box-shadow: 0 2px 6px rgba(217, 119, 83, 0.2);
+}
+
+.neon-btn:hover {
+  background: var(--color-secondary);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(217, 119, 83, 0.35);
+  filter: brightness(1.05);
+}
+
+.neon-btn:active {
+  transform: translateY(0);
+}
+
+.neon-btn-secondary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 24px;
+  background: #ffffff;
+  border: 1.5px solid var(--border-glass);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: var(--transition-smooth);
+}
+
+.neon-btn-secondary:hover {
+  background: var(--bg-primary);
+  border-color: var(--text-muted);
+  color: var(--text-primary);
+}
+
+/* 📜 优雅滚动条 */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(25, 25, 25, 0.1);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(25, 25, 25, 0.25);
+}
+
+/* 🚥 消息气泡 (类似 Claude 精致优雅的无框排版或淡淡的底色) */
+.chat-bubble {
+  max-width: 85%;
+  padding: 14px 20px;
+  border-radius: 8px;
+  line-height: 1.6;
+  font-size: 14.5px;
+  animation: bubble-fade-in 0.2s ease-out;
+}
+
+.chat-bubble.user {
+  background: #ffffff;
+  border: 1px solid var(--border-glass);
+  color: var(--text-primary);
+  align-self: flex-end;
+  box-shadow: var(--shadow-glass);
+}
+
+.chat-bubble.assistant {
+  background: var(--bg-secondary);
+  border: 1px solid transparent;
+  color: var(--text-primary);
+  align-self: flex-start;
+}
+
+@keyframes bubble-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
