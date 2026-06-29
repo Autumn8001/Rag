@@ -199,13 +199,16 @@ EMBEDDING_MODEL="embedding-3"
 
 # 私有化本地模型部署切换示例 (如 vLLM, Ollama, Xinference)
 # OPENAI_API_KEY="local_dummy_key"
-# BASE_URL="http://localhost:8000/v1"
+# BASE_URL="http://localhost:8010/v1"
 # FLASH_MODEL="local-fast-model"
 # STANDARD_MODEL="local-chat-model"
 # PLUS_MODEL="local-chat-model"
 # EMBEDDING_MODEL="local-embedding-model"
 
-DATABASE_URL="postgresql://postgres:postgres@localhost:5432/enterprise_rag"
+# 默认本地开发推荐 SQLite，开箱即用
+DATABASE_URL="sqlite:///./data/enterprise_rag.db"
+# 如需 PostgreSQL，可改为：
+# DATABASE_URL="postgresql://postgres:postgres@localhost:5435/enterprise_rag"
 
 # LangSmith 可选
 LANGSMITH_TRACING=true
@@ -225,17 +228,17 @@ docker compose up --build -d
 
 ```bash
 docker compose up -d db
-uvicorn main:app --reload --port 8000
-streamlit run web_app.py
+uvicorn main:app --reload --port 8010
+npm --prefix frontend run dev
 ```
 
 访问地址：
 
 | 服务 | 地址 |
 | :--- | :--- |
-| 前端 | http://localhost:8501 |
-| 后端 API | http://localhost:8000 |
-| API 文档 | http://localhost:8000/docs |
+| 前端 | http://localhost:5178 |
+| 后端 API | http://localhost:8010 |
+| API 文档 | http://localhost:8010/docs |
 
 ---
 
@@ -320,3 +323,25 @@ RAGAS 评测用于观察回答忠实度、答案相关性和上下文召回率�
 - `.env`、`data/`、`.venv/`、`__pycache__/` 等目录已在 `.gitignore` 中忽略。
 - 上传 GitHub 前请确认没有提交真实 API Key、数据库密码或私有文档。
 - 本项目已全面升级为去中心化 JWT SSO 认证的多维度隔离架构，为企业生产级多租户开发提供了标准工业界设计思路。
+
+---
+
+## 测试
+
+新增了一组最小回归测试，覆盖以下关键链路：
+
+- 用户注册 / 登录 / `auth/me`
+- 聊天问答 / 会话列表 / 会话历史 / 删除会话
+- 文档上传 / 重复上传跳过 / 文档列表 / 清空知识库
+
+运行方式：
+
+```bash
+python -m pytest tests/test_api_flows.py -q
+```
+
+说明：
+
+- 这组测试不会调用真实大模型接口。
+- 测试会使用临时 SQLite 数据库。
+- RAG 流式生成、文档入库和清空操作都已在测试中 mock，以保证执行稳定、快速。

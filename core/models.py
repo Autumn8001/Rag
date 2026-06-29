@@ -1,6 +1,6 @@
 # 文件位置：core/models.py
 
-from sqlalchemy import Column, Integer, String, DateTime, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, Integer, String, DateTime, Text, UniqueConstraint
 from sqlalchemy.orm import declarative_base
 from datetime import datetime
 
@@ -89,4 +89,7 @@ class User(Base):
     username = Column(String, unique=True, index=True, nullable=False)  # 登录用户名，唯一
     hashed_password = Column(String, nullable=False)                    # 强加密哈希密码
     tenant_id = Column(String, index=True, nullable=False)              # 所属隔离租户 ID
-    created_at = Column(DateTime, default=datetime.now)
+    created_at = Column(DateTime, default=datetime.now)
+    is_temporary = Column(Boolean, nullable=False, default=False, server_default="false")
+    expires_at = Column(DateTime, nullable=True, index=True)
+    last_active_at = Column(DateTime, nullable=True)

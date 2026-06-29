@@ -1,120 +1,262 @@
-"""
-RAG 引擎核心模块
+"""Core RAG engine for retrieval, reranking, and streaming answers."""
 
-封装完整的 RAG 检索生成流水线，包含：
-- 语义路由（业务问题 vs. 日常闲聊）
-- 混合检索（向量检索 + BM25 关键词检索 + Flashrank 重排）
-- Critic Agent 前置评估（防止幻觉生成）
-- 全链路异步化，支持高并发流式输出
-"""
+from __future__ import annotations
 
+import hashlib
+import json
+import logging
 import os
 import pickle
-import hashlib
-import logging
 from pathlib import Path
+from typing import List
 
-from langchain_core.documents import Document
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import StrOutputParser
-from langchain_community.vectorstores import Chroma
+from langchain_classic.retrievers import ContextualCompressionRetriever
 from langchain_community.document_compressors import FlashrankRerank
-try:
-    import flashrank
-    import langchain_community.document_compressors.flashrank as lc_flashrank
-    setattr(lc_flashrank, 'Ranker', flashrank.Ranker)
-    FlashrankRerank.model_rebuild()
-except Exception:
-    pass
 from langchain_community.retrievers import BM25Retriever
-from langchain_text_splitters import RecursiveCharacterTextSplitter, MarkdownHeaderTextSplitter
-from langchain_classic.retrievers import EnsembleRetriever, ContextualCompressionRetriever
-
-from core.llm_factory import flash_llm, standard_llm, plus_llm, embeddings_model
+from langchain_community.vectorstores import Chroma
+from langchain_core.callbacks import CallbackManagerForRetrieverRun
+from langchain_core.documents import Document
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.retrievers import BaseRetriever
+from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 from langsmith import traceable
+from pydantic import ConfigDict
+
+from core.llm_factory import embeddings_model, flash_llm, standard_llm
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# 路径配置
-# ---------------------------------------------------------------------------
+try:
+    import flashrank
+    import langchain_community.document_compressors.flashrank as lc_flashrank
+
+    setattr(lc_flashrank, "Ranker", flashrank.Ranker)
+    FlashrankRerank.model_rebuild()
+except Exception:
+    flashrank = None
+
 BASE_DIR = Path(__file__).parent.parent
 DB_DIR = BASE_DIR / "data" / "chroma_db"
-BM25_FILE = BASE_DIR / "data" / "bm25.pkl"
+
+PROMPT_INJECTION_KEYWORDS = [
+    "system prompt",
+    "system message",
+    "ignore the instruction",
+    "ignore previous",
+    "translate the above",
+    "spell check the above",
+    "you are now a",
+    "忘掉",
+    "忽略之前的",
+    "打印系统提示",
+    "输出你的设定",
+    "扮演",
+    "你现在是",
+    "绕过设定",
+]
+
+MISSING_KNOWLEDGE_MESSAGE = "Knowledge base is empty. Please upload documents first."
+NO_MATCH_MESSAGE = "No relevant evidence was found in the knowledge base for this question."
+PROMPT_BLOCK_MESSAGE = (
+    "[Security] Potential prompt-injection or privilege-escalation attempt detected. "
+    "The request has been blocked."
+)
+METADATA_START_MARKER = "__METADATA_START__"
+METADATA_END_MARKER = "__METADATA_END__"
+SMALL_TALK_EXACT_MATCHES = {
+    "hi",
+    "hello",
+    "hey",
+    "你好",
+    "您好",
+    "嗨",
+    "哈喽",
+    "在吗",
+    "谢谢",
+    "thanks",
+    "thankyou",
+    "thankyou!",
+}
+SMALL_TALK_CONTAINS_MATCHES = [
+    "你是谁",
+    "介绍一下你自己",
+    "介绍你自己",
+    "你能做什么",
+    "你会什么",
+    "你可以做什么",
+    "你是做什么的",
+]
+
+
+class MultiTenantRRFRetriever(BaseRetriever):
+    vector_retriever: BaseRetriever
+    bm25_retriever: BaseRetriever | None = None
+    k: int = 60
+    vector_weight: float = 0.5
+    bm25_weight: float = 0.5
+    top_n: int = 8
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    def _get_relevant_documents(
+        self,
+        query: str,
+        *,
+        run_manager: CallbackManagerForRetrieverRun | None = None,
+    ) -> List[Document]:
+        import asyncio
+
+        return asyncio.run(self._aget_relevant_documents(query, run_manager=run_manager))
+
+    async def _aget_relevant_documents(
+        self,
+        query: str,
+        *,
+        run_manager: CallbackManagerForRetrieverRun | None = None,
+    ) -> List[Document]:
+        import asyncio
+
+        tasks = [self.vector_retriever.ainvoke(query)]
+        if self.bm25_retriever:
+            tasks.append(self.bm25_retriever.ainvoke(query))
+
+        results = await asyncio.gather(*tasks)
+        vector_docs = results[0]
+        bm25_docs = results[1] if len(results) > 1 else []
+
+        vector_weight = self.vector_weight
+        bm25_weight = self.bm25_weight
+        if len(query) < 5 or any(char.isdigit() for char in query):
+            vector_weight = 0.3
+            bm25_weight = 0.7
+
+        rrf_scores: dict[str, float] = {}
+        doc_map: dict[str, Document] = {}
+
+        def get_doc_key(doc: Document) -> str:
+            content_hash = hashlib.md5(doc.page_content.encode("utf-8")).hexdigest()
+            source = doc.metadata.get("source", "unknown")
+            return f"{source}_{content_hash}"
+
+        for rank, doc in enumerate(vector_docs, start=1):
+            key = get_doc_key(doc)
+            doc_map[key] = doc
+            rrf_scores[key] = rrf_scores.get(key, 0.0) + vector_weight * (1.0 / (self.k + rank))
+            doc.metadata["vector_rank"] = rank
+
+        for rank, doc in enumerate(bm25_docs, start=1):
+            key = get_doc_key(doc)
+            if key not in doc_map:
+                doc_map[key] = doc
+            rrf_scores[key] = rrf_scores.get(key, 0.0) + bm25_weight * (1.0 / (self.k + rank))
+            doc_map[key].metadata["bm25_rank"] = rank
+
+        sorted_keys = sorted(rrf_scores.keys(), key=lambda key: rrf_scores[key], reverse=True)
+        final_docs: list[Document] = []
+        for key in sorted_keys[: self.top_n]:
+            doc = doc_map[key]
+            doc.metadata["rrf_score"] = round(rrf_scores[key], 6)
+            final_docs.append(doc)
+        return final_docs
 
 
 class RAGEngine:
-    """
-    RAG 检索生成引擎（单例，支持多租户隔离）
-
-    负责管理向量数据库连接、多租户 BM25 检索器缓存、Rerank 压缩器，
-    以及完整的异步流式问答流水线。
-    """
+    """Single-instance RAG engine with tenant isolation."""
 
     def __init__(self):
         self.vectorstore = None
-        self.bm25_retrievers = {}  # 缓存不同租户的 BM25 检索器：tenant_id -> BM25Retriever
+        self.bm25_retrievers: dict[str, BM25Retriever | None] = {}
         self.compressor = None
         self._initialize_reranker()
 
+    def _build_vectorstore(self):
+        return Chroma(
+            persist_directory=str(DB_DIR),
+            embedding_function=embeddings_model,
+        )
+
     def _get_vectorstore(self):
-        """获取或初始化向量数据库连接。"""
         if self.vectorstore is None:
-            if os.path.exists(DB_DIR):
-                self.vectorstore = Chroma(
-                    persist_directory=str(DB_DIR),
-                    embedding_function=embeddings_model,
-                )
+            if DB_DIR.exists():
+                self.vectorstore = self._build_vectorstore()
             else:
-                logger.warning("Local Chroma database not found. Engine waiting for first document upload.")
+                logger.warning("Local Chroma database not found. Waiting for first document upload.")
         return self.vectorstore
 
     def _initialize_reranker(self):
-        """初始化 Flashrank Rerank 压缩器。"""
+        if flashrank is None:
+            logger.info("Flashrank is unavailable, falling back to retrieval without reranking.")
+            return
         try:
             self.compressor = FlashrankRerank(top_n=8)
-        except Exception as e:
-            logger.warning("Reranker initialization failed: %s", e)
+        except Exception as exc:
+            logger.warning("Reranker initialization failed: %s", exc)
+
+    def _bm25_file_for_tenant(self, tenant_id: str) -> Path:
+        return BASE_DIR / "data" / f"bm25_{tenant_id}.pkl"
+
+    def _persist_bm25_retriever(self, tenant_id: str, retriever: BM25Retriever | None) -> None:
+        bm25_file = self._bm25_file_for_tenant(tenant_id)
+        if retriever is None:
+            if bm25_file.exists():
+                bm25_file.unlink()
+            self.bm25_retrievers[tenant_id] = None
+            return
+
+        bm25_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(bm25_file, "wb") as file:
+            pickle.dump(retriever, file)
+        self.bm25_retrievers[tenant_id] = retriever
+
+    def _rebuild_bm25_retriever(self, tenant_id: str, vectorstore) -> None:
+        all_db_data = vectorstore.get(where={"tenant_id": tenant_id})
+        if not all_db_data or not all_db_data.get("documents"):
+            self._persist_bm25_retriever(tenant_id, None)
+            return
+
+        all_docs = [
+            Document(
+                page_content=all_db_data["documents"][index],
+                metadata=all_db_data["metadatas"][index],
+            )
+            for index in range(len(all_db_data["documents"]))
+        ]
+        self._persist_bm25_retriever(tenant_id, BM25Retriever.from_documents(all_docs))
 
     def _get_bm25_retriever_for_tenant(self, tenant_id: str):
-        """为指定租户获取或加载其专属的 BM25 检索器"""
         if tenant_id not in self.bm25_retrievers:
-            bm25_file = BASE_DIR / "data" / f"bm25_{tenant_id}.pkl"
+            bm25_file = self._bm25_file_for_tenant(tenant_id)
             try:
                 if bm25_file.exists():
-                    with open(bm25_file, "rb") as f:
-                        self.bm25_retrievers[tenant_id] = pickle.load(f)
+                    with open(bm25_file, "rb") as file:
+                        self.bm25_retrievers[tenant_id] = pickle.load(file)
                 else:
                     self.bm25_retrievers[tenant_id] = None
-            except Exception as e:
-                logger.error("Failed to load BM25 retriever for tenant %s: %s", tenant_id, e)
+            except Exception as exc:
+                logger.error("Failed to load BM25 retriever for tenant %s: %s", tenant_id, exc)
                 self.bm25_retrievers[tenant_id] = None
         return self.bm25_retrievers[tenant_id]
 
     def _get_tenant_retriever(self, tenant_id: str):
-        """为指定租户动态构建混合检索与精排管道"""
         vectorstore = self._get_vectorstore()
         if not vectorstore:
             return None
 
-        # 1. 向量库检索器（加入 tenant_id filter 限制）
         base_retriever = vectorstore.as_retriever(
             search_kwargs={"filter": {"tenant_id": tenant_id}, "k": 8}
         )
-
-        # 2. 当前租户专用的 BM25 检索器
         bm25_retriever = self._get_bm25_retriever_for_tenant(tenant_id)
 
-        # 3. 混合检索（Ensemble 融合）
         if base_retriever and bm25_retriever:
-            medium_retriever = EnsembleRetriever(
-                retrievers=[base_retriever, bm25_retriever],
-                weights=[0.5, 0.5],
+            medium_retriever = MultiTenantRRFRetriever(
+                vector_retriever=base_retriever,
+                bm25_retriever=bm25_retriever,
+                top_n=8,
             )
         else:
             medium_retriever = base_retriever
 
-        # 4. Flashrank Rerank 精排过滤
         if not medium_retriever:
             return None
 
@@ -124,70 +266,61 @@ class RAGEngine:
                     base_compressor=self.compressor,
                     base_retriever=medium_retriever,
                 )
-            except Exception as e:
-                logger.warning("Tenant reranker creation failed: %s", e)
+            except Exception as exc:
+                logger.warning("Tenant reranker creation failed: %s", exc)
         return medium_retriever
 
-    @traceable(run_type="chain", name="Critic相关性评估裁判")
+    @traceable(run_type="chain", name="critic_context_evaluation")
     async def evaluate_context(self, question: str, context: str) -> bool:
-        """
-        Critic Agent：判断检索到的上下文是否与问题相关。
-        """
         eval_prompt = ChatPromptTemplate.from_template(
-            """你是一个企业知识库 RAG 系统的证据评估裁判。
-            你的任务不是判断参考资料是否已经组织成完整答案，而是判断资料中是否存在回答问题所需的事实依据。
+            """You are a relevance checker for an enterprise RAG system.
+Decide whether the reference material contains enough evidence to answer the user's question.
 
-            评判规则：
-            1. 如果参考资料直接包含答案，或包含可以通过计算、比较、条件判断得出答案的关键事实，输出 YES。
-            2. 对价格、折扣、保修、城市级别、补贴、报销、退货等问题，只要资料包含相关规则或数值依据，输出 YES。
-            3. 对“文档是否提及某信息”的问题，只要参考资料属于同一产品、政策或主题，即使资料未提及该字段，也输出 YES，让回答模型基于资料说明“未提及”。
-            4. 仅当参考资料与问题主题完全无关，无法提供任何事实依据时，输出 NO。
-            5. 当不确定时，倾向于输出 YES 而不是 NO。
-            6. 必须仅输出 YES 或 NO，不要包含任何其他说明文字。
+Rules:
+1. Output YES if the reference directly contains the answer.
+2. Output YES if the reference contains facts that allow the answer to be derived.
+3. Output YES if the question asks whether the document mentions something and the material is clearly about the same topic.
+4. Output NO only if the reference is completely unrelated to the question.
+5. When unsure, prefer YES.
+6. Output only YES or NO.
 
-            【参考资料】：
-            {context}
+Reference:
+{context}
 
-            【用户问题】：
-            {question}
-            """
+Question:
+{question}
+"""
         )
         chain = eval_prompt | flash_llm | StrOutputParser()
         result = await chain.ainvoke({"context": context, "question": question})
         return "YES" in result.upper()
 
-    @traceable(run_type="chain", name="多轮对话Query改写")
+    @traceable(run_type="chain", name="rewrite_query")
     async def rewrite_query(self, user_question: str, history: list) -> str:
-        """根据对话历史将问题改写为独立的完整问句。"""
         if not history:
             return user_question
 
-        history_text = "\n".join(
-            [f"{msg['role']}: {msg['content']}" for msg in history]
-        )
+        history_text = "\n".join(f"{msg['role']}: {msg['content']}" for msg in history)
         rewrite_prompt = ChatPromptTemplate.from_template(
-            """请根据对话历史，将最新的用户问题改写为一个独立的、意思完整的问句。
-            必须仅输出改写后的问句，不要包含任何其他文字。
+            """Rewrite the latest user question into a self-contained question.
+Return only the rewritten question.
 
-            【对话历史】：
-            {history}
+History:
+{history}
 
-            【最新问题】：
-            {question}
-            """
+Latest question:
+{question}
+"""
         )
         chain = rewrite_prompt | flash_llm | StrOutputParser()
         return await chain.ainvoke({"history": history_text, "question": user_question})
 
-    @traceable(run_type="chain", name="日常与业务意图路由器")
+    @traceable(run_type="chain", name="classify_question")
     async def classify_question(self, user_question: str) -> str:
-        """
-        语义路由：将问题分类为 A（业务检索）或 B（闲聊）。
-        """
         system_prompt = (
-            "你是一个精准的意图分类器。请严格仅输出 A 或 B，不要包含任何其他字符：\n"
-            "A: 需要检索知识库的问题（如业务规则、产品规格、公司政策、出差报销等专业知识性问题）\n"
-            "B: 日常闲聊、打招呼、问候，或与知识库完全无关的随意对话"
+            "Classify the user input. Output only A or B.\n"
+            "A: knowledge-base question that needs retrieval.\n"
+            "B: casual conversation or unrelated small talk."
         )
         messages = [
             {"role": "system", "content": system_prompt},
@@ -196,14 +329,15 @@ class RAGEngine:
         response = await flash_llm.ainvoke(messages)
         return response.content.strip()
 
-    @traceable(run_type="chain", name="多租户知识分片入库")
-    def ingest_knowledge(self, md_text: str, source_filename: str, tenant_id: str = "default_tenant") -> bool:
-        """
-        将 Markdown 文本切分后写入向量库（注入租户ID），并重新生成该租户专属的 BM25 检索器。
-        """
+    @traceable(run_type="chain", name="ingest_knowledge")
+    def ingest_knowledge(
+        self,
+        md_text: str,
+        source_filename: str,
+        tenant_id: str = "default_tenant",
+    ) -> bool:
         logger.info("Ingesting document for tenant '%s': %s", tenant_id, source_filename)
         try:
-            # 按 Markdown 标题层级切分，再按字符长度二次切分
             md_splitter = MarkdownHeaderTextSplitter(
                 headers_to_split_on=[("#", "H1"), ("##", "H2"), ("###", "H3")]
             )
@@ -212,98 +346,123 @@ class RAGEngine:
             text_splitter = RecursiveCharacterTextSplitter(chunk_size=300, chunk_overlap=50)
             final_chunks = text_splitter.split_documents(md_chunks)
 
-            # 基于内容生成幂等 ID，防止重复入库
             ids = []
             for chunk in final_chunks:
                 chunk.metadata["source"] = source_filename
                 chunk.metadata["tenant_id"] = tenant_id
-                # ID 计算也加入 tenant_id 防止多租户间哈希冲突
                 ids.append(
                     hashlib.md5(
                         (chunk.page_content + source_filename + tenant_id).encode("utf-8")
                     ).hexdigest()
                 )
 
-            # 写入向量库
             vectorstore = self._get_vectorstore()
             if not vectorstore:
-                self.vectorstore = Chroma(
-                    persist_directory=str(DB_DIR),
-                    embedding_function=embeddings_model,
-                )
+                DB_DIR.mkdir(parents=True, exist_ok=True)
+                self.vectorstore = self._build_vectorstore()
                 vectorstore = self.vectorstore
 
             vectorstore.add_documents(final_chunks, ids=ids)
-
-            # 只提取当前租户的文档数据，以重建该租户专用的 BM25 检索器
-            all_db_data = vectorstore.get(where={"tenant_id": tenant_id})
-            if all_db_data and all_db_data.get("documents"):
-                all_docs = [
-                    Document(
-                        page_content=all_db_data["documents"][i],
-                        metadata=all_db_data["metadatas"][i],
-                    )
-                    for i in range(len(all_db_data["documents"]))
-                ]
-                bm25_retriever = BM25Retriever.from_documents(all_docs)
-                self.bm25_retrievers[tenant_id] = bm25_retriever
-
-                # 持久化为租户专属的 pkl
-                bm25_file = BASE_DIR / "data" / f"bm25_{tenant_id}.pkl"
-                with open(bm25_file, "wb") as f:
-                    pickle.dump(bm25_retriever, f)
+            self._rebuild_bm25_retriever(tenant_id, vectorstore)
 
             return True
-
-        except Exception as e:
-            logger.error("Failed to ingest document '%s' for tenant %s: %s", source_filename, tenant_id, e)
+        except Exception as exc:
+            logger.error(
+                "Failed to ingest document '%s' for tenant %s: %s",
+                source_filename,
+                tenant_id,
+                exc,
+            )
             return False
 
-    @traceable(run_type="chain", name="RAG流式问答流水线")
-    async def stream_rag_answer(self, question: str, history: list = None, tenant_id: str = "default_tenant"):
-        """
-        流式 RAG 问答主流程（支持多租户）。
-        """
+    def _is_prompt_injection(self, question: str) -> bool:
+        normalized_question = question.lower().replace(" ", "")
+        for keyword in PROMPT_INJECTION_KEYWORDS:
+            if keyword.replace(" ", "") in normalized_question:
+                logger.warning("Prompt injection detected by keyword rule: %s", keyword)
+                return True
+        return False
+
+    def _is_small_talk(self, question: str) -> bool:
+        normalized_question = question.strip().lower()
+        compact_question = normalized_question.replace(" ", "")
+        if compact_question in SMALL_TALK_EXACT_MATCHES:
+            return True
+        if any(keyword in compact_question for keyword in SMALL_TALK_CONTAINS_MATCHES):
+            return True
+        return False
+
+    async def _stream_persona_response(self, question: str, history: list | None = None):
+        persona_messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a helpful enterprise assistant. "
+                    "For casual chat, be brief, friendly, and guide the user back to knowledge-base questions when appropriate."
+                ),
+            }
+        ]
+        if history:
+            persona_messages.extend(history[-6:])
+        persona_messages.append({"role": "user", "content": question})
+        async for chunk in flash_llm.astream(persona_messages):
+            if chunk.content:
+                yield chunk.content
+
+    @traceable(run_type="chain", name="stream_rag_answer")
+    async def stream_rag_answer(
+        self,
+        question: str,
+        history: list | None = None,
+        tenant_id: str = "default_tenant",
+    ):
         logger.info("Processing question for tenant %s: %s", tenant_id, question)
+
+        if self._is_prompt_injection(question):
+            yield PROMPT_BLOCK_MESSAGE
+            return
+
+        if self._is_small_talk(question):
+            async for chunk in self._stream_persona_response(question, history):
+                yield chunk
+            return
+
         clean_query = await self.rewrite_query(question, history) if history else question
         history_text = ""
         if history:
-            history_text = "\n".join(
-                [f"{msg['role']}: {msg['content']}" for msg in history]
-            )
-        route = await self.classify_question(question)
+            history_text = "\n".join(f"{msg['role']}: {msg['content']}" for msg in history)
 
+        route = await self.classify_question(question)
         if "A" in route:
             tenant_retriever = self._get_tenant_retriever(tenant_id)
             if not tenant_retriever:
-                yield "知识库尚未就绪，请先通过管理界面上传文档。"
+                yield MISSING_KNOWLEDGE_MESSAGE
                 return
 
             retrieved_docs = await tenant_retriever.ainvoke(clean_query)
             if not retrieved_docs:
-                yield "抱歉，知识库中没有与该问题相关的资料，为保证回答准确性，暂无法作答。"
+                yield NO_MATCH_MESSAGE
                 return
 
             context_str = "\n\n".join(doc.page_content for doc in retrieved_docs)
-
-            # Critic Agent 前置评估
             if not await self.evaluate_context(question, context_str):
-                yield "抱歉，知识库中没有与该问题相关的资料，为保证回答准确性，暂无法作答。"
+                yield NO_MATCH_MESSAGE
                 return
 
             answer_prompt = ChatPromptTemplate.from_template(
-                """你是一个专业的企业知识库助手。请严格基于【参考资料】回答用户问题，不要添加资料中没有的内容。
-                如果存在【对话历史】，请结合历史理解用户当前问题中的指代词和省略信息，但最终回答仍必须以参考资料为依据。
+                """You are an enterprise knowledge assistant.
+Answer strictly based on the provided reference material.
+If the answer is not present, say so clearly instead of inventing information.
 
-                【对话历史】：
-                {history}
+Conversation history:
+{history}
 
-                【参考资料】：
-                {context}
+Reference material:
+{context}
 
-                【用户问题】：
-                {input}
-                """
+User question:
+{input}
+"""
             )
             chain = answer_prompt | standard_llm | StrOutputParser()
             async for chunk in chain.astream(
@@ -311,68 +470,83 @@ class RAGEngine:
             ):
                 yield chunk
 
-            # 来源溯源
-            if retrieved_docs:
-                yield "\n\n---\n**参考来源：**\n"
-                for i, source in enumerate(
-                    set(d.metadata.get("source", "未知") for d in retrieved_docs), 1
-                ):
-                    yield f"{i}. {source}\n"
+            yield "\n\n---\n**References:**\n"
+            for index, source in enumerate(
+                sorted(set(doc.metadata.get("source", "Unknown") for doc in retrieved_docs)),
+                start=1,
+            ):
+                yield f"{index}. {source}\n"
 
-        else:
-            # B 路线：带统一人格的闲聊回复
-            persona_messages = [
+            chunks_payload = [
                 {
-                    "role": "system",
-                    "content": (
-                        "你是一个智能知识库助手，名字叫小智。"
-                        "你的核心职责是帮用户解答知识库中的专业问题。"
-                        "对于日常闲聊和问候，请用简短、友好的方式自然回应，并引导用户提出业务问题。"
-                        "不要凭空捏造任何业务数据或知识库中不存在的信息。"
-                    ),
-                },
+                    "content": doc.page_content,
+                    "source": doc.metadata.get("source", "Unknown"),
+                    "rrf_score": doc.metadata.get("rrf_score", 0.0),
+                    "vector_rank": doc.metadata.get("vector_rank"),
+                    "bm25_rank": doc.metadata.get("bm25_rank"),
+                    "h1": doc.metadata.get("H1", ""),
+                    "h2": doc.metadata.get("H2", ""),
+                    "h3": doc.metadata.get("H3", ""),
+                }
+                for doc in retrieved_docs
             ]
-            if history:
-                persona_messages.extend(history[-6:])
-            persona_messages.append({"role": "user", "content": question})
-            async for chunk in flash_llm.astream(persona_messages):
-                if chunk.content:
-                    yield chunk.content
+            metadata_str = json.dumps({"chunks": chunks_payload}, ensure_ascii=False)
+            yield f"\n\n{METADATA_START_MARKER}\n{metadata_str}\n{METADATA_END_MARKER}"
+            return
+
+        async for chunk in self._stream_persona_response(question, history):
+            yield chunk
 
     def clear_all_data(self, tenant_id: str) -> bool:
-        """仅清空指定租户的向量库和 BM25 索引，并重置其内存状态。"""
         vectorstore = self._get_vectorstore()
         if vectorstore:
-            # 只获取该租户的数据以进行删除
             all_db_data = vectorstore.get(where={"tenant_id": tenant_id})
             ids = all_db_data.get("ids", [])
             if ids:
                 vectorstore.delete(ids=ids)
+        self._persist_bm25_retriever(tenant_id, None)
+        return True
 
-        bm25_file = BASE_DIR / "data" / f"bm25_{tenant_id}.pkl"
-        if bm25_file.exists():
-            os.remove(bm25_file)
+    def remove_document(self, source_filename: str, tenant_id: str) -> bool:
+        vectorstore = self._get_vectorstore()
+        if not vectorstore:
+            self._persist_bm25_retriever(tenant_id, None)
+            return True
 
-        if tenant_id in self.bm25_retrievers:
-            del self.bm25_retrievers[tenant_id]
-
+        where_filter = {"$and": [{"tenant_id": tenant_id}, {"source": source_filename}]}
+        db_data = vectorstore.get(where=where_filter)
+        ids = db_data.get("ids", []) if db_data else []
+        if ids:
+            vectorstore.delete(ids=ids)
+            self._rebuild_bm25_retriever(tenant_id, vectorstore)
+        else:
+            self._persist_bm25_retriever(tenant_id, self._get_bm25_retriever_for_tenant(tenant_id))
         return True
 
 
-# ---------------------------------------------------------------------------
-# 模块级单例与兼容性导出
-# ---------------------------------------------------------------------------
 rag_engine = RAGEngine()
 
 
-async def stream_rag_answer(question: str, history: list = None, tenant_id: str = "default_tenant"):
+async def stream_rag_answer(
+    question: str,
+    history: list | None = None,
+    tenant_id: str = "default_tenant",
+):
     async for chunk in rag_engine.stream_rag_answer(question, history, tenant_id):
         yield chunk
 
 
-def ingest_knowledge(md_text: str, source_filename: str, tenant_id: str = "default_tenant") -> bool:
+def ingest_knowledge(
+    md_text: str,
+    source_filename: str,
+    tenant_id: str = "default_tenant",
+) -> bool:
     return rag_engine.ingest_knowledge(md_text, source_filename, tenant_id)
 
 
 def clear_all_data(tenant_id: str) -> bool:
     return rag_engine.clear_all_data(tenant_id)
+
+
+def remove_document(source_filename: str, tenant_id: str) -> bool:
+    return rag_engine.remove_document(source_filename, tenant_id)

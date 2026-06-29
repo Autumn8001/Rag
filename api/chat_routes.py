@@ -21,12 +21,18 @@ from sqlalchemy.orm import Session
 from core.database import get_db
 from core.crud import create_chat_record, get_chat_history
 from core.models import ChatHistory, User
-from core.rag_engine import stream_rag_answer
+from core.rag_engine import METADATA_START_MARKER, stream_rag_answer
 from core.auth import get_current_user
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["Chat"])
+
+
+def strip_response_metadata(response_text: str) -> str:
+    if METADATA_START_MARKER not in response_text:
+        return response_text.strip()
+    return response_text.split(METADATA_START_MARKER, 1)[0].rstrip()
 
 
 class ChatRequest(BaseModel):
@@ -68,23 +74,34 @@ async def chat_endpoint(
 
     async def stream_generator():
         full_response = ""
-        async for chunk in stream_rag_answer(user_question, history, tenant_id=tenant_id):
-            full_response += chunk
-            yield chunk
+        try:
+            async for chunk in stream_rag_answer(user_question, history, tenant_id=tenant_id):
+                full_response += chunk
+                yield chunk
+        except Exception as e:
+            logger.exception("Chat generation failed (session=%s): %s", session_id, e)
+            yield "\n[Error] Failed to generate a response. Please try again later."
+            return
 
         try:
-            create_chat_record(
-                db=db,
-                session_id=session_id,
-                user_query=user_question,
-                ai_response=full_response,
-                tenant_id=tenant_id,
-                user_id=user_id,
-            )
+            persisted_response = strip_response_metadata(full_response)
+            if persisted_response:
+                create_chat_record(
+                    db=db,
+                    session_id=session_id,
+                    user_query=user_question,
+                    ai_response=persisted_response,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                )
         except Exception as e:
             logger.error("Failed to save chat record (session=%s): %s", session_id, e)
 
-    return StreamingResponse(stream_generator(), media_type="text/event-stream")
+    return StreamingResponse(
+        stream_generator(),
+        media_type="text/event-stream",
+        headers={"X-Session-Id": session_id, "Cache-Control": "no-cache"},
+    )
 
 
 @router.get("/sessions", summary="List recent chat sessions")
@@ -165,7 +182,7 @@ async def get_session_history(
         for record in records:
             history_list.append({"role": "user", "content": record.user_query})
             history_list.append({"role": "assistant", "content": record.ai_response})
-        return {"status": "success", "data": history_list}
+        return {"status": "success", "session_id": session_id, "data": history_list}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

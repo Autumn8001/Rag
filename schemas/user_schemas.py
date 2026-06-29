@@ -1,28 +1,42 @@
-from pydantic import BaseModel, Field, validator
 from datetime import datetime
 import re
 
-class UserRegister(BaseModel):
-    username: str = Field(..., min_length=2, max_length=50, description="用户名")
-    password: str = Field(..., min_length=6, max_length=100, description="密码，长度不低于 6 位")
+from pydantic import BaseModel, Field, field_validator
 
-    @validator("username")
-    def validate_username(cls, v):
-        if not re.match(r"^[a-zA-Z0-9_-]{2,50}$", v):
-            raise ValueError("用户名只允许包含字母、数字、下划线(_)或连字符(-)，长度为 2-50 位。")
-        return v
+
+USERNAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{2,50}$")
+
+
+class UserRegister(BaseModel):
+    username: str = Field(..., min_length=2, max_length=50, description="Username")
+    password: str = Field(..., min_length=6, max_length=100, description="Password")
+
+    @field_validator("username")
+    @classmethod
+    def validate_username(cls, value: str) -> str:
+        if not USERNAME_PATTERN.fullmatch(value):
+            raise ValueError(
+                "Username may only contain letters, numbers, underscores, and hyphens (2-50 chars)."
+            )
+        return value
+
 
 class UserLogin(BaseModel):
-    username: str = Field(..., description="用户名")
-    password: str = Field(..., description="密码")
+    username: str = Field(..., description="Username")
+    password: str = Field(..., description="Password")
+
 
 class TokenResponse(BaseModel):
-    access_token: str = Field(..., description="访问令牌")
-    token_type: str = Field("bearer", description="令牌类型")
-    username: str = Field(..., description="用户名")
-    tenant_id: str = Field(..., description="分配或绑定的隔离租户 ID")
+    access_token: str = Field(..., description="Access token")
+    token_type: str = Field(default="bearer", description="Token type")
+    username: str = Field(..., description="Username")
+    tenant_id: str = Field(..., description="Tenant identifier")
+    expires_at: datetime | None = Field(default=None, description="Session expiry timestamp")
+
 
 class UserInfoResponse(BaseModel):
-    username: str = Field(..., description="用户名")
-    tenant_id: str = Field(..., description="隔离租户 ID")
-    created_at: datetime = Field(..., description="创建时间")
+    username: str = Field(..., description="Username")
+    tenant_id: str = Field(..., description="Tenant identifier")
+    created_at: datetime = Field(..., description="Created timestamp")
+    is_temporary: bool = Field(default=False, description="Whether this is a temporary visitor")
+    expires_at: datetime | None = Field(default=None, description="Temporary visitor expiry timestamp")

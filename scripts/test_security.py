@@ -12,10 +12,12 @@ import time
 import uuid
 from dataclasses import dataclass
 
+import os
+
 import requests
 
 
-BASE_URL = "http://localhost:8000/api/v1"
+BASE_URL = os.getenv("ENTERPRISE_RAG_BASE_URL", "http://localhost:8010/api/v1")
 
 
 @dataclass

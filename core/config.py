@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     STANDARD_MODEL: str = "glm-4"
     PLUS_MODEL: str = "glm-4-plus"
     EMBEDDING_MODEL: str = "embedding-3"
-    DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5432/enterprise_rag"
+    DATABASE_URL: str = "sqlite:///./data/enterprise_rag.db"
     LANGCHAIN_TRACING_V2: str = "false"
     LANGSMITH_TRACING: str | None = None
     LANGCHAIN_ENDPOINT: str = "https://api.smith.langchain.com"
@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str = "enterprise-rag-super-secret-key-change-it-in-production"
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
+    VISITOR_SESSION_TTL_MINUTES: int = 120
+    TEMP_VISITOR_CLEANUP_INTERVAL_SECONDS: int = 300
+    ENABLE_TEMP_VISITOR_CLEANUP: bool = True
+    SEED_STATIC_VISITOR_DEMO: bool = False
 
     model_config = SettingsConfigDict(
         env_file=BASE_DIR / ".env",

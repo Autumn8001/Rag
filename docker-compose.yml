@@ -8,7 +8,7 @@ services:
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=enterprise_rag
     ports:
-      - "5432:5432"
+      - "5435:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
@@ -25,7 +25,7 @@ services:
       dockerfile: Dockerfile
     container_name: rag_backend
     ports:
-      - "8000:8000"
+      - "8010:8000"
     volumes:
       - rag_data:/app/data
     env_file:
