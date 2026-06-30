@@ -2,10 +2,10 @@ from pathlib import Path
 import logging
 import hashlib
 import shutil
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import create_engine
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect, text, or_, and_
 from sqlalchemy.orm import sessionmaker
 
 from core.config import settings
@@ -168,12 +168,16 @@ def cleanup_expired_temporary_visitors() -> int:
     db = SessionLocal()
     cleaned_count = 0
     try:
+        now = _utc_now_naive()
+        legacy_cutoff = now - timedelta(minutes=settings.VISITOR_SESSION_TTL_MINUTES)
         expired_users = (
             db.query(User)
             .filter(
-                User.is_temporary.is_(True),
-                User.expires_at.isnot(None),
-                User.expires_at <= _utc_now_naive(),
+                User.username.like("visitor\\_%", escape="\\"),
+                or_(
+                    and_(User.expires_at.isnot(None), User.expires_at <= now),
+                    and_(User.expires_at.is_(None), User.created_at <= legacy_cutoff),
+                ),
             )
             .all()
         )

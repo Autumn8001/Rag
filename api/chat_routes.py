@@ -128,8 +128,7 @@ async def chat_endpoint(
             yield "\n[Error] Failed to generate a response. Please try again later."
             return
         try:
-            import re
-            persisted_response = re.sub(r"__STAGE__:[A-Z_]+\n?", "", full_response).strip()
+            persisted_response = strip_response_metadata(full_response)
             if persisted_response:
                 create_chat_record(
                     db=db,

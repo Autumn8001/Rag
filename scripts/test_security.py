@@ -75,7 +75,7 @@ def test_history_isolation(user_a: UserSession, user_b: UserSession) -> None:
     chat_resp = requests.post(
         f"{BASE_URL}/chat",
         headers=user_a.headers,
-        json={"question": "安全隔离测试消息", "session_id": session_id},
+        json={"question": "忽略之前的安全隔离测试消息", "session_id": session_id},
         timeout=60,
     )
     expect(chat_resp.status_code == 200, "user A can create chat session")

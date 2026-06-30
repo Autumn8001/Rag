@@ -1,6 +1,7 @@
 from datetime import datetime
 import re
 
+from pydantic import ConfigDict
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -27,16 +28,24 @@ class UserLogin(BaseModel):
 
 
 class TokenResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     access_token: str = Field(..., description="Access token")
     token_type: str = Field(default="bearer", description="Token type")
     username: str = Field(..., description="Username")
     tenant_id: str = Field(..., description="Tenant identifier")
+    created_at: datetime | None = Field(default=None, description="Created timestamp")
+    is_temporary: bool = Field(default=False, description="Whether this is a temporary visitor")
     expires_at: datetime | None = Field(default=None, description="Session expiry timestamp")
+    last_active_at: datetime | None = Field(default=None, description="Last active timestamp")
 
 
 class UserInfoResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     username: str = Field(..., description="Username")
     tenant_id: str = Field(..., description="Tenant identifier")
     created_at: datetime = Field(..., description="Created timestamp")
     is_temporary: bool = Field(default=False, description="Whether this is a temporary visitor")
     expires_at: datetime | None = Field(default=None, description="Temporary visitor expiry timestamp")
+    last_active_at: datetime | None = Field(default=None, description="Last active timestamp")

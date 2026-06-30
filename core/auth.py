@@ -65,7 +65,7 @@ async def get_current_user(
 
     if token:
         credentials_exception = _build_auth_exception(
-            "Invalid or expired credentials."
+            "登录凭证无效或已过期。"
         )
         try:
             payload = jwt.decode(
@@ -81,14 +81,13 @@ async def get_current_user(
 
         user = db.query(User).filter(User.username == username).first()
         if user is None:
-            raise _build_auth_exception("User not found.")
+            raise _build_auth_exception("用户不存在。")
 
         if user.is_temporary and user.expires_at:
             now = datetime.now(timezone.utc).replace(tzinfo=None)
             if user.expires_at <= now:
-                raise _build_auth_exception("Temporary visitor session has expired.")
+                raise _build_auth_exception("访客会话已过期，请重新登录。")
             user.last_active_at = now
-            user.expires_at = temporary_visitor_expiry_from(now)
             db.commit()
             db.refresh(user)
         return user
@@ -96,7 +95,7 @@ async def get_current_user(
     if x_api_key:
         mapping = db.query(APIKeyMap).filter(APIKeyMap.api_key == x_api_key).first()
         if mapping is None:
-            raise _build_auth_exception("Invalid X-API-Key.")
+            raise _build_auth_exception("X-API-Key 无效。")
         user = (
             db.query(User)
             .filter(User.username == mapping.user_id, User.tenant_id == mapping.tenant_id)
@@ -117,5 +116,5 @@ async def get_current_user(
         )
 
     raise _build_auth_exception(
-        "Missing authentication token. Please log in before continuing."
+        "缺少认证令牌，请先登录。"
     )

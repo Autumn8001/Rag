@@ -9,9 +9,10 @@ import {
 } from 'lucide-react';
 import './App.css';
 
-// 后端 API 基准地址 (修改为防冲突的 8010 端口)
-const API_BASE = 'http://localhost:8010/api/v1';
+const DEFAULT_API_BASE = `${window.location.protocol}//${window.location.hostname}:8010/api/v1`;
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE).replace(/\/$/, '');
 const PAGE_SIZE = 10;
+const VISITOR_SESSION_TTL_MINUTES = 120;
 const DEFAULT_HEALTH_COMPONENTS = [
   { key: 'database', name: 'PostgreSQL', status: 'unknown' },
   { key: 'vectorstore', name: 'Chroma', status: 'unknown' },
@@ -44,6 +45,10 @@ function App() {
   const [token, setToken] = useState(sessionStorage.getItem('token') || '');
   const [username, setUsername] = useState(sessionStorage.getItem('username') || '');
   const [tenantId, setTenantId] = useState(sessionStorage.getItem('tenant_id') || '');
+  const [sessionExpiresAt, setSessionExpiresAt] = useState(sessionStorage.getItem('session_expires_at') || '');
+  const [visitorSessionStartedAt, setVisitorSessionStartedAt] = useState(sessionStorage.getItem('visitor_session_started_at') || '');
+  const [isTemporaryVisitor, setIsTemporaryVisitor] = useState(sessionStorage.getItem('is_temporary') === 'true');
+  const [nowTick, setNowTick] = useState(Date.now());
   const [isRegister, setIsRegister] = useState(false);
   
   // 登录/注册表单
@@ -58,7 +63,7 @@ function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [rightPanelWidth, setRightPanelWidth] = useState(360); // 默认 360px
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
-  const [activeRightTab, setActiveRightTab] = useState('citations'); // 'citations' | 'kb'
+  const [activeRightTab, setActiveRightTab] = useState('kb'); // 'citations' | 'kb'
 
   // 左侧边栏拖拽拉伸
   const handleLeftResizeMouseDown = (e) => {
@@ -156,6 +161,80 @@ function App() {
   });
 
   const messagesEndRef = useRef(null);
+  const activeChatAbortRef = useRef(null);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNowTick(Date.now());
+    }, 30000);
+    return () => {
+      clearInterval(timer);
+      isMountedRef.current = false;
+      activeChatAbortRef.current?.abort?.();
+    };
+  }, []);
+
+  const formatDurationLabel = (milliseconds) => {
+    if (!milliseconds || milliseconds <= 0) return '0 分钟';
+    const totalMinutes = Math.max(1, Math.floor(milliseconds / 60000));
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    if (hours <= 0) return `${minutes} 分钟`;
+    if (minutes === 0) return `${hours} 小时`;
+    return `${hours} 小时 ${minutes} 分钟`;
+  };
+
+  const parseUtcTimestampMs = (value) => {
+    if (!value) return NaN;
+    if (value instanceof Date) return value.getTime();
+    if (typeof value !== 'string') return NaN;
+    const normalized = value.includes('T') && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(value)
+      ? `${value}Z`
+      : value;
+    return new Date(normalized).getTime();
+  };
+  const updateVisitorLifecycleCache = (data) => {
+    if (!data) return;
+    if (typeof data.is_temporary === 'boolean') {
+      setIsTemporaryVisitor(data.is_temporary);
+      sessionStorage.setItem('is_temporary', String(data.is_temporary));
+    }
+    if (data.expires_at) {
+      setSessionExpiresAt(data.expires_at);
+      sessionStorage.setItem('session_expires_at', data.expires_at);
+    }
+
+    const startedAt = data.created_at || data.last_active_at || '';
+    if (startedAt) {
+      setVisitorSessionStartedAt(startedAt);
+      sessionStorage.setItem('visitor_session_started_at', startedAt);
+    }
+  };
+
+  const isVisitorSession = () => {
+    const rawUsername = username || sessionStorage.getItem('username') || '';
+    return Boolean(
+      isTemporaryVisitor ||
+      rawUsername.startsWith('visitor_') ||
+      sessionExpiresAt ||
+      visitorSessionStartedAt
+    );
+  };
+
+  const getVisitorRemainingMs = () => {
+    const expiresTs = parseUtcTimestampMs(sessionExpiresAt);
+    if (Number.isFinite(expiresTs)) {
+      return Math.max(0, expiresTs - nowTick);
+    }
+
+    const startedTs = parseUtcTimestampMs(visitorSessionStartedAt);
+    if (Number.isFinite(startedTs)) {
+      const fallbackExpiresTs = startedTs + VISITOR_SESSION_TTL_MINUTES * 60 * 1000;
+      return Math.max(0, fallbackExpiresTs - nowTick);
+    }
+    return 0;
+  };
 
   // 1. Toast 通知推送函数
   const showToast = (title, message, type = 'info') => {
@@ -256,6 +335,7 @@ function App() {
         sessionStorage.setItem('token', data.access_token);
         sessionStorage.setItem('username', data.username);
         sessionStorage.setItem('tenant_id', data.tenant_id);
+        updateVisitorLifecycleCache(data);
         showToast('登录成功', `欢迎回来，${data.username}！专属隔离沙箱已拉起。`, 'success');
       } else {
         setAuthError(data.detail || '用户名或密码错误');
@@ -284,6 +364,7 @@ function App() {
         sessionStorage.setItem('token', data.access_token);
         sessionStorage.setItem('username', data.username);
         sessionStorage.setItem('tenant_id', data.tenant_id);
+        updateVisitorLifecycleCache(data);
         showToast('访客免密登录成功', '已为您随机生成物理隔离租户沙箱，数据仅保留在当前会话中。', 'success');
       } else {
         setAuthError(data.detail || '访客免密通道登录失败');
@@ -297,9 +378,13 @@ function App() {
 
   // 7. 登出
   const handleLogout = () => {
+    activeChatAbortRef.current?.abort?.();
     setToken('');
     setUsername('');
     setTenantId('');
+    setSessionExpiresAt('');
+    setVisitorSessionStartedAt('');
+    setIsTemporaryVisitor(false);
     setSessions([]);
     setActiveSessionId('');
     setMessages([]);
@@ -310,6 +395,33 @@ function App() {
     setDeveloperMode(false);
     sessionStorage.clear();
     showToast('已登出', '您已安全退出当前租户空间。', 'info');
+  };
+
+  const syncCurrentUserSession = async (authToken) => {
+    if (!authToken) return;
+    try {
+      const res = await fetch(`${API_BASE}/auth/me`, {
+        headers: { 'Authorization': `Bearer ${authToken}` }
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!isMountedRef.current) return;
+
+      if (data?.username) {
+        setUsername(data.username);
+        sessionStorage.setItem('username', data.username);
+      }
+      if (data?.tenant_id) {
+        setTenantId(data.tenant_id);
+        sessionStorage.setItem('tenant_id', data.tenant_id);
+      }
+      if (typeof data?.is_temporary === 'boolean') {
+        setIsTemporaryVisitor(data.is_temporary);
+      }
+      updateVisitorLifecycleCache(data);
+    } catch (err) {
+      // ignore sync failure and keep local session state
+    }
   };
 
   const getCitationFilename = (citation) => citation?.filename || citation?.source || '';
@@ -356,6 +468,7 @@ function App() {
       fetchDocuments(kbPage);
       fetchSessions();
       checkHealthStatus();
+      syncCurrentUserSession(token);
     }
   }, [token, kbPage]);
 
@@ -661,6 +774,10 @@ function App() {
     const textToSend = overrideText || inputMessage;
     if (!textToSend.trim() || isSending) return;
 
+    activeChatAbortRef.current?.abort?.();
+    const abortController = new AbortController();
+    activeChatAbortRef.current = abortController;
+
     const userText = textToSend;
     setInputMessage('');
     setIsSending(true);
@@ -725,6 +842,7 @@ function App() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
+        signal: abortController.signal,
         body: JSON.stringify({ 
           question: userText, 
           session_id: tempSessionId
@@ -749,6 +867,9 @@ function App() {
       let assistantText = '';
 
       while (true) {
+        if (abortController.signal.aborted) {
+          break;
+        }
         const { value, done } = await reader.read();
         if (done) break;
 
@@ -840,8 +961,13 @@ function App() {
         }
       }
 
-      fetchSessions();
+      if (!abortController.signal.aborted && isMountedRef.current) {
+        fetchSessions();
+      }
     } catch (err) {
+      if (err?.name === 'AbortError') {
+        return;
+      }
       setMessages(prev => {
         const next = [...prev];
         next[next.length - 1] = { role: 'assistant', content: `[错误] 无法建立连接，请确认本地服务已拉起。` };
@@ -849,8 +975,11 @@ function App() {
       });
     } finally {
       clearInterval(intervalId);
-      setCurrentStep(5);
-      setIsSending(false);
+      activeChatAbortRef.current = null;
+      if (isMountedRef.current) {
+        setCurrentStep(5);
+        setIsSending(false);
+      }
     }
   };
 
@@ -1371,16 +1500,22 @@ function App() {
             </div>
           )}
           {(() => {
-            const rawUsername = username || 'Visitor';
-            const displayUsername = rawUsername.startsWith('visitor_') ? 'visitor' : rawUsername;
+            const rawUsername = username || '访客';
+            const displayUsername = isVisitorSession() ? '访客' : rawUsername;
+            const remainingMs = isVisitorSession() ? getVisitorRemainingMs() : 0;
+            const remainingMinutes = Math.floor(remainingMs / 60000);
+            const remainingClass = isVisitorSession() && remainingMinutes <= 15 ? 'is-expiring' : ''; 
+            const userSubText = isVisitorSession()
+              ? `剩余体验 ${formatDurationLabel(remainingMs)}`
+              : '当前工作区';
             return (
-              <div className="sidebar-user-card" onClick={() => setShowUserMenu(!showUserMenu)}>
+              <div className={`sidebar-user-card ${remainingClass}`} onClick={() => setShowUserMenu(!showUserMenu)}>
                 <div className="user-avatar-circle">
-                  {displayUsername ? displayUsername[0].toUpperCase() : 'V'}
+                  {displayUsername ? displayUsername[0].toUpperCase() : '访'}
                 </div>
                 <div className="user-card-info-col">
                   <span className="user-card-name-text">{displayUsername}</span>
-                  <span className="user-card-sub-text">Workspace Alpha</span>
+                  <span className="user-card-sub-text">{userSubText}</span>
                 </div>
               </div>
             );
@@ -1393,8 +1528,8 @@ function App() {
 
       {/* 中间 Workspace 区域 (最大宽度 900px, 左右留白自适应) */}
       {(() => {
-        const rawUsername = username || 'Visitor';
-        const displayUsername = rawUsername.startsWith('visitor_') ? 'visitor' : rawUsername;
+        const rawUsername = username || '访客';
+        const displayUsername = isVisitorSession() ? '访客' : rawUsername;
         const recentSessionsLimit = sessions.slice(0, 3); // 最多 3 条最近会话
         
         return (
@@ -1537,7 +1672,7 @@ function App() {
                                 }}>
                                   V
                                 </div>
-                                <span style={{ fontWeight: '600', color: '#222222', fontSize: '13.5px' }}>visitor</span>
+                                <span style={{ fontWeight: '600', color: '#222222', fontSize: '13.5px' }}>访客</span>
                               </>
                             ) : (
                               <>

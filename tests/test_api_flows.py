@@ -62,7 +62,7 @@ class ApiFlowTests(unittest.TestCase):
         cls.patchers = [
             patch.object(chat_routes, "stream_rag_answer", _fake_stream_rag_answer),
             patch.object(admin_routes, "ingest_knowledge", return_value=True),
-            patch.object(admin_routes, "clear_all_data", return_value=True),
+            patch.object(database, "clear_all_data", return_value=True),
             patch.object(admin_routes, "md_converter", _MockMarkdownConverter()),
         ]
         for patcher in cls.patchers:
@@ -119,21 +119,21 @@ class ApiFlowTests(unittest.TestCase):
     def test_auth_endpoints_reject_missing_or_invalid_credentials(self):
         missing_auth_response = self.client.get("/api/v1/auth/me")
         self.assertEqual(missing_auth_response.status_code, 401, missing_auth_response.text)
-        self.assertIn("Missing authentication token", missing_auth_response.text)
+        self.assertIn("缺少认证令牌", missing_auth_response.text)
 
         invalid_token_response = self.client.get(
             "/api/v1/auth/me",
             headers={"Authorization": "Bearer invalid-token"},
         )
         self.assertEqual(invalid_token_response.status_code, 401, invalid_token_response.text)
-        self.assertIn("Invalid or expired credentials", invalid_token_response.text)
+        self.assertIn("登录凭证无效", invalid_token_response.text)
 
         invalid_api_key_response = self.client.get(
             "/api/v1/auth/me",
             headers={"X-API-Key": "bad-key"},
         )
         self.assertEqual(invalid_api_key_response.status_code, 401, invalid_api_key_response.text)
-        self.assertIn("Invalid X-API-Key", invalid_api_key_response.text)
+        self.assertIn("X-API-Key 无效", invalid_api_key_response.text)
 
     def test_auth_me_supports_legacy_x_api_key_mapping(self):
         db = self.testing_session_local()
@@ -199,7 +199,7 @@ class ApiFlowTests(unittest.TestCase):
             headers={"Authorization": f"Bearer {payload['access_token']}"},
         )
         self.assertEqual(me_response.status_code, 401, me_response.text)
-        self.assertIn("expired", me_response.text.lower())
+        self.assertIn("已过期", me_response.text)
 
     def test_chat_session_history_and_delete_flow(self):
         token_payload = self._register_and_login("chat_user")
@@ -356,7 +356,7 @@ class ApiFlowTests(unittest.TestCase):
         finally:
             db.close()
 
-        with patch.object(admin_routes, "clear_all_data", return_value=False):
+        with patch.object(admin_routes, "cleanup_tenant_resources", side_effect=RuntimeError("clear failed")):
             clear_response = self.client.delete("/api/v1/clear", headers=headers)
 
         self.assertEqual(clear_response.status_code, 500, clear_response.text)

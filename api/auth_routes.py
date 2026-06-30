@@ -36,6 +36,8 @@ def _build_token_payload(user: User, expires_at: datetime | None = None) -> dict
         "token_type": "bearer",
         "username": user.username,
         "tenant_id": user.tenant_id,
+        "created_at": user.created_at,
+        "is_temporary": user.is_temporary,
         "expires_at": expires_at,
     }
 

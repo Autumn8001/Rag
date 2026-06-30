@@ -2284,8 +2284,8 @@ body {
 
 .input-bar-inner {
   height: 56px;
-  padding: 0 10px 0 12px;
-  gap: 10px;
+  padding: 0 12px 0 12px;
+  gap: 8px;
   box-shadow: 0 1px 2px rgba(16, 24, 40, 0.03), 0 10px 24px rgba(16, 24, 40, 0.045);
   border: 1px solid rgba(79, 70, 229, 0.18);
   background: rgba(255, 255, 255, 0.98);
@@ -2306,6 +2306,7 @@ body {
   appearance: none;
   -webkit-appearance: none;
   box-shadow: none;
+  background-clip: padding-box;
 }
 
 .input-bar-inner input::placeholder {
@@ -3335,4 +3336,12 @@ body {
 /* 步骤文本 */
 .thinking-step-text {
   font-size: var(--font-body-sm);
+}
+
+.sidebar-user-card.is-expiring {
+  border-color: rgba(245, 158, 11, 0.28);
+}
+
+.sidebar-user-card.is-expiring .user-card-sub-text {
+  color: #B45309;
 }
