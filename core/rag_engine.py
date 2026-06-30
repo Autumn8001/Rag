@@ -56,11 +56,10 @@ PROMPT_INJECTION_KEYWORDS = [
     "绕过设定",
 ]
 
-MISSING_KNOWLEDGE_MESSAGE = "Knowledge base is empty. Please upload documents first."
-NO_MATCH_MESSAGE = "No relevant evidence was found in the knowledge base for this question."
+MISSING_KNOWLEDGE_MESSAGE = "知识库为空，请先上传文档。"
+NO_MATCH_MESSAGE = "在知识库中未找到与此问题相关的参考资料。"
 PROMPT_BLOCK_MESSAGE = (
-    "[Security] Potential prompt-injection or privilege-escalation attempt detected. "
-    "The request has been blocked."
+    "[安全提示] 检测到潜在的提示词注入或越权尝试。该请求已被安全拦截。"
 )
 METADATA_START_MARKER = "__METADATA_START__"
 METADATA_END_MARKER = "__METADATA_END__"
@@ -423,15 +422,21 @@ Latest question:
             return
 
         if self._is_small_talk(question):
+            yield "__STAGE__:UNDERSTANDING\n"
+            yield "__STAGE__:GENERATING\n"
             async for chunk in self._stream_persona_response(question, history):
                 yield chunk
             return
 
+        yield "__STAGE__:UNDERSTANDING\n"
+
+        yield "__STAGE__:REWRITE\n"
         clean_query = await self.rewrite_query(question, history) if history else question
         history_text = ""
         if history:
             history_text = "\n".join(f"{msg['role']}: {msg['content']}" for msg in history)
 
+        yield "__STAGE__:RETRIEVING\n"
         route = await self.classify_question(question)
         if "A" in route:
             tenant_retriever = self._get_tenant_retriever(tenant_id)
@@ -444,23 +449,30 @@ Latest question:
                 yield NO_MATCH_MESSAGE
                 return
 
+            yield "__STAGE__:RERANKING\n"
             context_str = "\n\n".join(doc.page_content for doc in retrieved_docs)
             if not await self.evaluate_context(question, context_str):
                 yield NO_MATCH_MESSAGE
                 return
 
+            yield "__STAGE__:GENERATING\n"
             answer_prompt = ChatPromptTemplate.from_template(
-                """You are an enterprise knowledge assistant.
-Answer strictly based on the provided reference material.
-If the answer is not present, say so clearly instead of inventing information.
+                """你是一个专业的企业知识助手。
+请结合提供的对话历史与参考资料，以自然、专业、通顺的语气回答用户的问题。
 
-Conversation history:
+【回答要求】：
+1. 必须且只能基于提供的参考资料进行回答。回答结构应当【先进行简明扼要的总结，然后再分点展开详细说明】。
+2. 表达必须自然、通顺、专业，像资深专家一样对信息进行提炼与归纳，绝对不允许机械地直接复制或照搬参考资料原文。
+3. 结构清晰，合理使用标准的 Markdown 格式（如标题、加粗重点、无序或有序列表等）以提高可读性。
+4. 如果参考资料中没有相关答案，或者提供的信息不足以回答该问题，请直接明确说明“在参考资料中未找到相关信息”，绝对不要捏造或凭空想象。
+
+对话历史：
 {history}
 
-Reference material:
+参考资料：
 {context}
 
-User question:
+用户问题：
 {input}
 """
             )
@@ -470,17 +482,10 @@ User question:
             ):
                 yield chunk
 
-            yield "\n\n---\n**References:**\n"
-            for index, source in enumerate(
-                sorted(set(doc.metadata.get("source", "Unknown") for doc in retrieved_docs)),
-                start=1,
-            ):
-                yield f"{index}. {source}\n"
-
             chunks_payload = [
                 {
                     "content": doc.page_content,
-                    "source": doc.metadata.get("source", "Unknown"),
+                    "source": doc.metadata.get("source", "未知来源"),
                     "rrf_score": doc.metadata.get("rrf_score", 0.0),
                     "vector_rank": doc.metadata.get("vector_rank"),
                     "bm25_rank": doc.metadata.get("bm25_rank"),
@@ -494,6 +499,7 @@ User question:
             yield f"\n\n{METADATA_START_MARKER}\n{metadata_str}\n{METADATA_END_MARKER}"
             return
 
+        yield "__STAGE__:GENERATING\n"
         async for chunk in self._stream_persona_response(question, history):
             yield chunk
 

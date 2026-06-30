@@ -1900,28 +1900,35 @@ body {
 .citation-vertical-card {
   background: #FFFFFF;
   border: 1px solid #EAEAEA;
-  border-radius: 12px;
-  padding: 14px 16px;
+  border-radius: 8px;
+  padding: 8px 12px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   box-sizing: border-box;
+  position: relative; /* 为悬浮提示框定位 */
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.citation-vertical-card:hover {
+  border-color: rgba(79, 70, 229, 0.3);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
 }
 
 .citation-vertical-card-left {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   overflow: hidden;
   flex: 1;
 }
 
 .citation-vertical-card-icon-box {
-  width: 32px;
-  height: 32px;
-  border-radius: 6px;
-  background: #FEE2E2;
-  color: #EF4444;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  background: #EEF2FF;
+  color: #4F46E5;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1944,39 +1951,99 @@ body {
 
 .citation-vertical-card-name {
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 550;
   color: var(--text-primary);
 }
 
 .citation-vertical-card-page {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--text-secondary);
   background: #F3F4F6;
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.citation-vertical-card-btn {
+  height: 26px;
+  padding: 0 10px;
+  background: #FFFFFF;
+  border: 1px solid #EAEAEA;
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: var(--transition-smooth);
+}
+
+/* 引用预览提示框 */
+.citation-preview-tooltip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  width: 380px;
+  background: #FFFFFF;
+  border: 1px solid rgba(79, 70, 229, 0.15);
+  border-radius: 8px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.08), 0 4px 12px rgba(0, 0, 0, 0.03);
+  padding: 12px 14px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(6px);
+  transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
+}
+
+.citation-vertical-card:hover .citation-preview-tooltip {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+.citation-tooltip-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #F3F4F6;
+  padding-bottom: 6px;
+}
+
+.citation-tooltip-source {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.citation-tooltip-page {
+  font-size: 10px;
+  color: #4F46E5;
+  background: #EEF2FF;
   padding: 1px 6px;
   border-radius: 4px;
 }
 
-.citation-vertical-card-snippet {
+.citation-tooltip-content {
   font-size: 12px;
-  color: var(--text-secondary);
-  margin-top: 4px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 480px;
+  line-height: 1.6;
+  color: #4B5563;
+  max-height: 160px;
+  overflow-y: auto;
+  text-align: left;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
-.citation-vertical-card-btn {
-  height: 32px;
-  padding: 0 14px;
-  background: #FFFFFF;
-  border: 1px solid #EAEAEA;
-  border-radius: 6px;
-  color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: var(--transition-smooth);
+.citation-tooltip-content::-webkit-scrollbar {
+  width: 4px;
+}
+
+.citation-tooltip-content::-webkit-scrollbar-thumb {
+  background: #E5E7EB;
+  border-radius: 2px;
 }
 
 .citation-vertical-card-btn:hover {
@@ -2217,14 +2284,38 @@ body {
 
 .input-bar-inner {
   height: 56px;
-  padding: 0 var(--space-3);
-  box-shadow: var(--shadow-soft);
-  border-color: transparent;
+  padding: 0 10px 0 12px;
+  gap: 10px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.03), 0 10px 24px rgba(16, 24, 40, 0.045);
+  border: 1px solid rgba(79, 70, 229, 0.18);
+  background: rgba(255, 255, 255, 0.98);
+  overflow: hidden;
 }
 
 .input-bar-inner:focus-within {
-  border-color: var(--accent-color);
-  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.08), var(--shadow-soft);
+  border-color: rgba(79, 70, 229, 0.72);
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.10), 0 10px 24px rgba(16, 24, 40, 0.05);
+  background: #FFFFFF;
+}
+
+.input-bar-inner input {
+  min-width: 0;
+  padding: 0;
+  line-height: 1.45;
+  border-radius: inherit;
+  appearance: none;
+  -webkit-appearance: none;
+  box-shadow: none;
+}
+
+.input-bar-inner input::placeholder {
+  color: #98A2B3;
+}
+
+.input-bar-inner input:focus,
+.input-bar-inner input:focus-visible {
+  outline: none;
+  box-shadow: none;
 }
 
 .input-paperclip-btn,
@@ -2239,6 +2330,20 @@ body {
 .input-send-btn {
   width: 36px;
   height: 36px;
+}
+
+.input-paperclip-btn {
+  color: #667085;
+  border-radius: 8px;
+}
+
+.input-paperclip-btn:hover {
+  background: #F8FAFC;
+  color: var(--accent-color);
+}
+
+.input-send-btn {
+  box-shadow: none;
 }
 
 .right-panel {
@@ -2949,4 +3054,285 @@ body {
 
 .audit-drawer-body {
   background: #F7F8FB;
+}
+
+/* ==========================================
+   Sidebar Resizable and Collapse Styling
+   ========================================== */
+
+.sidebar-panel {
+  position: relative;
+  transition: width 0.2s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s, padding 0.2s;
+  flex-shrink: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.right-panel {
+  position: relative;
+  transition: width 0.2s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s, padding 0.2s;
+  flex-shrink: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-panel.collapsed {
+  width: 0 !important;
+  min-width: 0 !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  border-right: none !important;
+}
+
+.right-panel.collapsed {
+  width: 0 !important;
+  min-width: 0 !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  border-left: none !important;
+}
+
+.sidebar-panel.collapsed > *,
+.right-panel.collapsed > * {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transition: opacity 0.1s ease;
+}
+
+/* 拖拽把手 */
+.resizer-bar.vertical-resizer {
+  width: 6px;
+  align-self: stretch;
+  cursor: col-resize;
+  position: relative;
+  background: transparent;
+  z-index: 100;
+  flex-shrink: 0;
+}
+
+.resizer-bar.vertical-resizer::after {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: transparent;
+  transition: background 0.15s ease;
+}
+
+.resizer-bar.vertical-resizer:hover::after {
+  background: #4F46E5;
+}
+
+/* 收起折叠按钮微调 */
+.panel-collapse-btn {
+  border-radius: 6px;
+  transition: all 0.2s ease;
+}
+
+.panel-collapse-btn:hover {
+  background: var(--surface-hover) !important;
+  color: var(--text-primary) !important;
+}
+
+/* 悬浮展开按钮 */
+.floating-expand-btn {
+  position: fixed;
+  top: 16px;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(230, 232, 239, 0.8);
+  box-shadow: 0 4px 12px rgba(16, 24, 40, 0.05);
+  color: #667085;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 999;
+}
+
+.floating-expand-btn:hover {
+  background: #FFFFFF;
+  color: #4F46E5;
+  border-color: rgba(79, 70, 229, 0.3);
+  transform: scale(1.05);
+  box-shadow: 0 6px 16px rgba(79, 70, 229, 0.08);
+}
+
+.floating-expand-btn.left-expand {
+  left: 12px;
+}
+
+.floating-expand-btn.right-expand {
+  right: 12px;
+}
+
+/* ==========================================
+   🤖 Thinking Pipeline 思考流水线样式
+   ========================================== */
+
+/* 渐显动效 */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fade-in {
+  animation: fadeIn 300ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+/* 蓝色 Pulse 动效 */
+@keyframes pulseBlue {
+  0% {
+    transform: scale(0.9);
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.5);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 4px rgba(59, 130, 246, 0);
+  }
+  100% {
+    transform: scale(0.9);
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
+  }
+}
+
+/* 旋转动效 */
+@keyframes spinSlow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 思考卡片容器 */
+.thinking-card-wrapper {
+  background: var(--surface-subtle);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  max-width: 400px;
+  width: 100%;
+  max-height: 300px;
+  opacity: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  transition: opacity 300ms cubic-bezier(0.4, 0, 0.2, 1),
+              max-height 300ms cubic-bezier(0.4, 0, 0.2, 1),
+              padding 300ms cubic-bezier(0.4, 0, 0.2, 1),
+              margin 300ms cubic-bezier(0.4, 0, 0.2, 1),
+              border-color 300ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 自动淡出与收缩 */
+.thinking-card-wrapper.fade-out {
+  opacity: 0;
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+  border-color: transparent;
+  pointer-events: none;
+}
+
+/* 思考卡片头部 */
+.thinking-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: var(--space-2);
+}
+
+.thinking-card-title {
+  font-size: var(--font-body-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.thinking-logo-icon {
+  color: var(--accent-color);
+  animation: spinSlow 4s linear infinite;
+}
+
+/* 步骤容器 */
+.thinking-card-steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  position: relative;
+}
+
+/* 步骤行 */
+.thinking-step-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  transition: color 250ms ease;
+}
+
+/* 状态样式 */
+.thinking-step-row.completed {
+  color: #10B981; /* 绿色 */
+}
+
+.thinking-step-row.active {
+  color: #3B82F6; /* 蓝色 */
+  font-weight: 500;
+}
+
+.thinking-step-row.pending {
+  color: var(--text-muted);
+}
+
+/* 步骤指示器 */
+.thinking-step-indicator {
+  width: 14px;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.thinking-step-indicator .check-icon {
+  color: #10B981;
+}
+
+/* 状态 Dot */
+.thinking-step-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.thinking-step-dot.active {
+  background-color: #3B82F6;
+  animation: pulseBlue 1.5s infinite ease-in-out;
+}
+
+.thinking-step-dot.pending {
+  background-color: #D1D5DB;
+}
+
+/* 步骤文本 */
+.thinking-step-text {
+  font-size: var(--font-body-sm);
 }

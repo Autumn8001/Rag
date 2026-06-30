@@ -30,9 +30,11 @@ router = APIRouter(prefix="/api/v1", tags=["Chat"])
 
 
 def strip_response_metadata(response_text: str) -> str:
-    if METADATA_START_MARKER not in response_text:
-        return response_text.strip()
-    return response_text.split(METADATA_START_MARKER, 1)[0].rstrip()
+    import re
+    cleaned = re.sub(r"__STAGE__:[A-Z_]+\n?", "", response_text)
+    if METADATA_START_MARKER not in cleaned:
+        return cleaned.strip()
+    return cleaned.split(METADATA_START_MARKER, 1)[0].rstrip()
 
 
 class ChatRequest(BaseModel):
@@ -125,9 +127,9 @@ async def chat_endpoint(
             logger.exception("Chat generation failed (session=%s): %s", session_id, e)
             yield "\n[Error] Failed to generate a response. Please try again later."
             return
-
         try:
-            persisted_response = strip_response_metadata(full_response)
+            import re
+            persisted_response = re.sub(r"__STAGE__:[A-Z_]+\n?", "", full_response).strip()
             if persisted_response:
                 create_chat_record(
                     db=db,

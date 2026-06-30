@@ -81,13 +81,13 @@ async def login_user(payload: UserLogin, db: Session = Depends(get_db)):
     if not user or not verify_password(payload.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid username or password.",
+            detail="用户名或密码错误。",
         )
 
     if user.is_temporary and user.expires_at and user.expires_at <= _utc_now_naive():
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Temporary visitor account has expired.",
+            detail="访客会话已过期，请重新登录。",
         )
 
     return _build_token_payload(user, user.expires_at if user.is_temporary else None)
@@ -96,7 +96,7 @@ async def login_user(payload: UserLogin, db: Session = Depends(get_db)):
 @router.post(
     "/visitor-login",
     response_model=TokenResponse,
-    summary="Create an isolated temporary visitor session",
+    summary="创建隔离的临时访客会话",
 )
 async def visitor_login(db: Session = Depends(get_db)):
     suffix = uuid.uuid4().hex[:12]
@@ -120,12 +120,12 @@ async def visitor_login(db: Session = Depends(get_db)):
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create visitor session: {exc}",
+            detail=f"创建访客会话失败：{exc}",
         ) from exc
 
     return _build_token_payload(visitor, expires_at)
 
 
-@router.get("/me", response_model=UserInfoResponse, summary="Current user info")
+@router.get("/me", response_model=UserInfoResponse, summary="当前用户信息")
 async def get_me(current_user: User = Depends(get_current_user)):
     return current_user

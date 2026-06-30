@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Lock, User, LogIn, UserPlus, Send, Plus, 
   Trash2, Database, MessageSquare, Shield, 
@@ -53,10 +53,60 @@ function App() {
   const [authError, setAuthError] = useState('');
   const [authSuccess, setAuthSuccess] = useState('');
 
-  // --- 控制台布局状态 ---
-  const [showLeftSidebar, setShowLeftSidebar] = useState(true);
-  const [showRightPanel, setShowRightPanel] = useState(true);
+  // --- 控制台布局状态与自定义拖拽拉伸 ---
+  const [sidebarWidth, setSidebarWidth] = useState(260); // 默认 260px
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [rightPanelWidth, setRightPanelWidth] = useState(360); // 默认 360px
+  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
   const [activeRightTab, setActiveRightTab] = useState('citations'); // 'citations' | 'kb'
+
+  // 左侧边栏拖拽拉伸
+  const handleLeftResizeMouseDown = (e) => {
+    e.preventDefault();
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+    
+    const handleMouseMove = (moveEvent) => {
+      const newWidth = moveEvent.clientX;
+      if (newWidth >= 180 && newWidth <= 400) {
+        setSidebarWidth(newWidth);
+      }
+    };
+    
+    const handleMouseUp = () => {
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+    
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
+
+  // 右侧面板拖拽拉伸
+  const handleRightResizeMouseDown = (e) => {
+    e.preventDefault();
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+    
+    const handleMouseMove = (moveEvent) => {
+      const newWidth = window.innerWidth - moveEvent.clientX;
+      if (newWidth >= 280 && newWidth <= 600) {
+        setRightPanelWidth(newWidth);
+      }
+    };
+    
+    const handleMouseUp = () => {
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+    
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
 
   // --- RAG 业务状态 ---
   const [sessions, setSessions] = useState([]);
@@ -66,6 +116,8 @@ function App() {
   const [inputMessage, setInputMessage] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [currentCitations, setCurrentCitations] = useState([]); 
+  const [currentStep, setCurrentStep] = useState(-1);
+  const [isCitationsExpanded, setIsCitationsExpanded] = useState(false);
 
   // 专属知识库分页列表
   const [documents, setDocuments] = useState([]);
@@ -457,22 +509,30 @@ function App() {
     setActiveSessionId(sessionId);
     setMessages([]);
     setCurrentCitations([]);
+    setIsCitationsExpanded(false);
     try {
       const res = await fetch(`${API_BASE}/history/${sessionId}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await res.json();
-      if (res.ok) {
-        const historyMsgs = data.data || [];
-        setMessages(historyMsgs);
-        
-        const assistantMsgs = historyMsgs.filter(m => m.role === 'assistant');
-        if (assistantMsgs.length > 0) {
-          const lastMsg = assistantMsgs[assistantMsgs.length - 1];
-          const parsed = parseCitationsFromContent(lastMsg.content);
-          setCurrentCitations(parsed.citations);
+        if (res.ok) {
+          const rawHistoryMsgs = data.data || [];
+          const assistantMsgs = rawHistoryMsgs.filter(m => m.role === 'assistant');
+          if (assistantMsgs.length > 0) {
+            const lastMsg = assistantMsgs[assistantMsgs.length - 1];
+            const parsed = parseCitationsFromContent(lastMsg.content);
+            setCurrentCitations(parsed.citations);
+          }
+          
+          const cleanHistoryMsgs = rawHistoryMsgs.map(m => {
+            if (m.role === 'assistant') {
+              const parsed = parseCitationsFromContent(m.content);
+              return { ...m, content: parsed.cleanContent };
+            }
+            return m;
+          });
+          setMessages(cleanHistoryMsgs);
         }
-      }
     } catch (err) {
       console.error('获取会话记录失败', err);
     }
@@ -482,6 +542,7 @@ function App() {
   const handleCreateNewChat = () => {
     setActiveSessionId('');
     setMessages([]);
+    setIsCitationsExpanded(false);
     setCurrentCitations([]);
   };
 
@@ -604,6 +665,7 @@ function App() {
     setInputMessage('');
     setIsSending(true);
     setCurrentCitations([]); 
+    setIsCitationsExpanded(false); 
 
     const tempSessionId = activeSessionId || `session_${Date.now()}`;
     if (!activeSessionId) {
@@ -612,6 +674,49 @@ function App() {
 
     setMessages(prev => [...prev, { role: 'user', content: userText }]);
     setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
+
+    // 初始化 Thinking Pipeline 状态与计时器
+    setCurrentStep(0);
+    let stepStartTimeVal = Date.now();
+    let parsedBackendStageVal = -1;
+    let hasBackendEventsVal = false;
+    let hasRealTextReceivedVal = false;
+
+    const intervalId = setInterval(() => {
+      const now = Date.now();
+      const elapsed = now - stepStartTimeVal;
+
+      setCurrentStep(curr => {
+        if (curr === -1 || curr >= 5) {
+          clearInterval(intervalId);
+          return curr;
+        }
+
+        if (curr < 4) {
+          if (hasBackendEventsVal) {
+            const nextStage = parsedBackendStageVal;
+            if (nextStage > curr && elapsed >= 350) {
+              stepStartTimeVal = now;
+              return curr + 1;
+            }
+          } else {
+            if (elapsed >= 400) {
+              stepStartTimeVal = now;
+              return curr + 1;
+            }
+          }
+        } else if (curr === 4) {
+          const isReady = hasBackendEventsVal
+            ? (parsedBackendStageVal === 5 && elapsed >= 350)
+            : (elapsed >= 400 && hasRealTextReceivedVal);
+          if (isReady) {
+            clearInterval(intervalId);
+            return 5;
+          }
+        }
+        return curr;
+      });
+    }, 50);
 
     try {
       const res = await fetch(`${API_BASE}/chat`, {
@@ -633,6 +738,8 @@ function App() {
           next[next.length - 1] = { role: 'assistant', content: `[错误] ${errorData.detail || '服务不可用'}` };
           return next;
         });
+        clearInterval(intervalId);
+        setCurrentStep(5);
         setIsSending(false);
         return;
       }
@@ -648,16 +755,50 @@ function App() {
         const textChunk = decoder.decode(value, { stream: true });
         assistantText += textChunk;
 
-        let displayCtx = assistantText;
+        // 检测后端步骤事件
+        if (assistantText.includes('__STAGE__:UNDERSTANDING')) {
+          hasBackendEventsVal = true;
+          parsedBackendStageVal = Math.max(parsedBackendStageVal, 0);
+        }
+        if (assistantText.includes('__STAGE__:REWRITE')) {
+          hasBackendEventsVal = true;
+          parsedBackendStageVal = Math.max(parsedBackendStageVal, 1);
+        }
+        if (assistantText.includes('__STAGE__:RETRIEVING')) {
+          hasBackendEventsVal = true;
+          parsedBackendStageVal = Math.max(parsedBackendStageVal, 2);
+        }
+        if (assistantText.includes('__STAGE__:RERANKING')) {
+          hasBackendEventsVal = true;
+          parsedBackendStageVal = Math.max(parsedBackendStageVal, 3);
+        }
+        if (assistantText.includes('__STAGE__:GENERATING')) {
+          hasBackendEventsVal = true;
+          parsedBackendStageVal = Math.max(parsedBackendStageVal, 4);
+        }
+
+        // 清洗步骤标记
+        const cleanCtx = assistantText.replace(/__STAGE__:[A-Z_]+\n?/g, '');
+
+        // 判断是否收到了真实的流式输出内容
+        const checkContent = cleanCtx.replace(/__METADATA_START__[\s\S]*/, '').trim();
+        if (checkContent.length > 0) {
+          hasRealTextReceivedVal = true;
+          if (hasBackendEventsVal) {
+            parsedBackendStageVal = 5;
+          }
+        }
+
+        let displayCtx = cleanCtx;
         let metaJsonStr = '';
-        const markerIdx = assistantText.indexOf('__METADATA_START__');
+        const markerIdx = cleanCtx.indexOf('__METADATA_START__');
         if (markerIdx !== -1) {
-          displayCtx = assistantText.substring(0, markerIdx).trim();
-          const endMarkerIdx = assistantText.indexOf('__METADATA_END__');
+          displayCtx = cleanCtx.substring(0, markerIdx).trim();
+          const endMarkerIdx = cleanCtx.indexOf('__METADATA_END__');
           if (endMarkerIdx !== -1) {
-            metaJsonStr = assistantText.substring(markerIdx + '__METADATA_START__'.length, endMarkerIdx).trim();
+            metaJsonStr = cleanCtx.substring(markerIdx + '__METADATA_START__'.length, endMarkerIdx).trim();
           } else {
-            metaJsonStr = assistantText.substring(markerIdx + '__METADATA_START__'.length).trim();
+            metaJsonStr = cleanCtx.substring(markerIdx + '__METADATA_START__'.length).trim();
           }
         }
 
@@ -679,14 +820,15 @@ function App() {
         }
       }
       
-      const finalMarkerIdx = assistantText.indexOf('__METADATA_START__');
+      const finalCleanText = assistantText.replace(/__STAGE__:[A-Z_]+\n?/g, '');
+      const finalMarkerIdx = finalCleanText.indexOf('__METADATA_START__');
       if (finalMarkerIdx !== -1) {
         let finalMetaStr = '';
-        const finalEndMarkerIdx = assistantText.indexOf('__METADATA_END__');
+        const finalEndMarkerIdx = finalCleanText.indexOf('__METADATA_END__');
         if (finalEndMarkerIdx !== -1) {
-          finalMetaStr = assistantText.substring(finalMarkerIdx + '__METADATA_START__'.length, finalEndMarkerIdx).trim();
+          finalMetaStr = finalCleanText.substring(finalMarkerIdx + '__METADATA_START__'.length, finalEndMarkerIdx).trim();
         } else {
-          finalMetaStr = assistantText.substring(finalMarkerIdx + '__METADATA_START__'.length).trim();
+          finalMetaStr = finalCleanText.substring(finalMarkerIdx + '__METADATA_START__'.length).trim();
         }
         try {
           const parsed = JSON.parse(finalMetaStr);
@@ -699,13 +841,15 @@ function App() {
       }
 
       fetchSessions();
-      setIsSending(false);
     } catch (err) {
       setMessages(prev => {
         const next = [...prev];
         next[next.length - 1] = { role: 'assistant', content: `[错误] 无法建立连接，请确认本地服务已拉起。` };
         return next;
       });
+    } finally {
+      clearInterval(intervalId);
+      setCurrentStep(5);
       setIsSending(false);
     }
   };
@@ -739,42 +883,150 @@ function App() {
 
   const groupedSessions = groupSessionsByTime(filteredSessions);
 
-  // 引用文字点击高亮滚动
-  const renderMessageContent = (content) => {
+  // 引用文字点击高亮滚动与 Markdown 块级解析器 (带自动元数据清洗)
+  const renderMessageContent = (rawContent) => {
+    if (!rawContent) return '';
+
+    // 剔除 __METADATA_START__ 及其之后的内容以及 stage 步骤标签，防止在气泡中直出
+    let content = rawContent;
+    const markerIdx = rawContent.indexOf('__METADATA_START__');
+    if (markerIdx !== -1) {
+      content = rawContent.substring(0, markerIdx);
+    }
+    content = content.replace(/__STAGE__:[A-Z_]+\n?/g, '').trim();
+
     if (!content) return '';
-    const regex = /\[(\d+)\]/g;
-    const parts = content.split(regex);
-    if (parts.length === 1) return content;
-    
-    return parts.map((part, idx) => {
-      if (idx % 2 === 1) {
-        const num = parseInt(part, 10);
-        return (
-          <button 
-            key={idx}
-            className="citation-anchor-btn" 
-            onClick={() => {
-              setActiveRightTab('citations');
-              const cardId = `citation-card-${num - 1}`;
-              setTimeout(() => {
-                const el = document.getElementById(cardId);
-                if (el) {
-                  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                  el.style.backgroundColor = 'rgba(79, 70, 229, 0.08)';
-                  setTimeout(() => {
-                    el.style.backgroundColor = '';
-                  }, 2000);
-                }
-              }, 100);
-            }}
-            title={`定位引文 [${num}]`}
-          >
-            [{num}]
-          </button>
-        );
+
+    // 解析单行内的加粗与引文超链接
+    const renderInlineText = (text) => {
+      const citationRegex = /\[(\d+)\]/g;
+      const parts = text.split(citationRegex);
+      return parts.map((part, idx) => {
+        if (idx % 2 === 1) {
+          const num = parseInt(part, 10);
+          return (
+            <button 
+              key={`citation-${idx}`}
+              className="citation-anchor-btn" 
+              onClick={() => {
+                setActiveRightTab('citations');
+                const cardId = `citation-card-${num - 1}`;
+                setTimeout(() => {
+                  const el = document.getElementById(cardId);
+                  if (el) {
+                    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    el.style.backgroundColor = 'rgba(79, 70, 229, 0.08)';
+                    setTimeout(() => {
+                      el.style.backgroundColor = '';
+                    }, 2000);
+                  }
+                }, 100);
+              }}
+              title={`定位引文 [${num}]`}
+            >
+              [{num}]
+            </button>
+          );
+        }
+        
+        // 解析 **加粗**
+        const boldRegex = /\*\*([^*]+)\*\*/g;
+        const boldParts = part.split(boldRegex);
+        if (boldParts.length > 1) {
+          return boldParts.map((subPart, subIdx) => {
+            if (subIdx % 2 === 1) {
+              return <strong key={`bold-${subIdx}`}>{subPart}</strong>;
+            }
+            return subPart;
+          });
+        }
+        return part;
+      });
+    };
+
+    // 按换行符拆分块级元素
+    const lines = content.split('\n');
+    const elements = [];
+    let listItems = [];
+    let listType = null; // 'ul' or 'ol'
+
+    const pushListIfExist = () => {
+      if (listItems.length > 0) {
+        const key = `list-${elements.length}`;
+        if (listType === 'ol') {
+          elements.push(
+            <ol key={key} style={{ margin: '8px 0', paddingLeft: '20px', listStyleType: 'decimal' }}>
+              {listItems}
+            </ol>
+          );
+        } else {
+          elements.push(
+            <ul key={key} style={{ margin: '8px 0', paddingLeft: '20px', listStyleType: 'disc' }}>
+              {listItems}
+            </ul>
+          );
+        }
+        listItems = [];
+        listType = null;
       }
-      return part;
-    });
+    };
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmed = line.trim();
+
+      // 标题语法 (支持 1 到 6 级标头)
+      const headingMatch = trimmed.match(/^(#{1,6})\s+(.*)$/);
+      if (headingMatch) {
+        pushListIfExist();
+        const level = headingMatch[1].length;
+        const text = headingMatch[2];
+        const headingStyles = {
+          1: { fontSize: '17px', margin: '14px 0 8px', fontWeight: '700' },
+          2: { fontSize: '15px', margin: '12px 0 6px', fontWeight: '600' },
+          3: { fontSize: '14px', margin: '10px 0 4px', fontWeight: '600' },
+          4: { fontSize: '13px', margin: '8px 0 4px', fontWeight: '600' },
+          5: { fontSize: '12px', margin: '6px 0 2px', fontWeight: '600' },
+          6: { fontSize: '11px', margin: '6px 0 2px', fontWeight: '600' }
+        };
+        const HeadingTag = `h${Math.min(level + 1, 6)}`;
+        elements.push(
+          <HeadingTag key={i} style={{ ...headingStyles[level], color: '#111827' }}>
+            {renderInlineText(text)}
+          </HeadingTag>
+        );
+      } 
+      // 无序列表
+      else if (/^[\*\-\+]\s+/.test(trimmed)) {
+        if (listType !== 'ul') {
+          pushListIfExist();
+          listType = 'ul';
+        }
+        const text = trimmed.replace(/^[\*\-\+]\s+/, '');
+        listItems.push(<li key={`li-${i}`} style={{ marginBottom: '4px', lineHeight: '1.6' }}>{renderInlineText(text)}</li>);
+      }
+      // 有序列表
+      else if (/^\d+\.\s+/.test(trimmed)) {
+        if (listType !== 'ol') {
+          pushListIfExist();
+          listType = 'ol';
+        }
+        const text = trimmed.replace(/^\d+\.\s+/, '');
+        listItems.push(<li key={`li-${i}`} style={{ marginBottom: '4px', lineHeight: '1.6' }}>{renderInlineText(text)}</li>);
+      }
+      // 空白行隔断
+      else if (trimmed === '') {
+        pushListIfExist();
+      }
+      // 普通段落
+      else {
+        pushListIfExist();
+        elements.push(<p key={i} style={{ margin: '6px 0', lineHeight: '1.6' }}>{renderInlineText(line)}</p>);
+      }
+    }
+    pushListIfExist();
+
+    return <div className="markdown-rendered-content">{elements}</div>;
   };
 
   // --- 登录页面 (保持原有极简双栏，适配靛蓝主色) ---
@@ -968,13 +1220,27 @@ function App() {
       />
       
       {/* 🔑 STEP 2: 重构左侧 Sidebar (按大厂规范进行 280px 设计定位) */}
-      <div className="sidebar-panel">
+      <div 
+        className={`sidebar-panel ${sidebarCollapsed ? 'collapsed' : ''}`}
+        style={{ width: sidebarCollapsed ? 0 : `${sidebarWidth}px` }}
+      >
         
         {/* Logo 区域 (⬢ Hexagon + H1 + Caption) */}
         <div className="sidebar-header">
-          <div className="sidebar-header-logo-row">
-            <Hexagon size={20} strokeWidth={1.5} className="sidebar-logo-icon" />
-            <h1>Enterprise RAG</h1>
+          <div className="sidebar-header-logo-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Hexagon size={20} strokeWidth={1.5} className="sidebar-logo-icon" />
+              <h1>Enterprise RAG</h1>
+            </div>
+            <button 
+              type="button" 
+              className="panel-collapse-btn" 
+              onClick={() => setSidebarCollapsed(true)} 
+              title="收起侧边栏"
+              style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', color: '#9CA3AF' }}
+            >
+              <ChevronLeft size={16} strokeWidth={1.5} />
+            </button>
           </div>
           <div className="sidebar-subtitle">AI Knowledge Workspace</div>
         </div>
@@ -1121,6 +1387,9 @@ function App() {
           })()}
         </div>
       </div>
+      {!sidebarCollapsed && (
+        <div className="resizer-bar vertical-resizer" onMouseDown={handleLeftResizeMouseDown} />
+      )}
 
       {/* 中间 Workspace 区域 (最大宽度 900px, 左右留白自适应) */}
       {(() => {
@@ -1132,7 +1401,7 @@ function App() {
           <div className="main-workspace">
             {messages.length === 0 ? (
               /* 欢迎状态 (Figma 极致留白布局) */
-              <div style={{ maxWidth: '900px', width: '100%', margin: '0 auto', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+              <div style={{ maxWidth: '900px', width: '100%', margin: '0 auto', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: 0, height: '100%' }}>
                 <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
                   
                   {/* 1. 欢迎标题与副标题 */}
@@ -1228,9 +1497,9 @@ function App() {
               </div>
             ) : (
               /* 聊天进行中状态 */
-              <div style={{ maxWidth: '900px', width: '100%', margin: '0 auto', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', paddingBottom: '24px' }}>
+              <div style={{ maxWidth: '900px', width: '100%', margin: '0 auto', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', paddingBottom: '24px', minHeight: 0, height: '100%' }}>
                 
-                <div className="chat-flow-container" style={{ padding: '0 0 24px 0' }}>
+                <div className="chat-flow-container" style={{ padding: '0 0 24px 0', flex: 1, overflowY: 'auto' }}>
                   {/* Figma 风格的顶部大会话标题与来源 Meta 汇总 */}
                   <div className="chat-flow-session-header">
                     <h2 className="chat-flow-header-title">
@@ -1280,21 +1549,57 @@ function App() {
                             )}
                           </div>
                           
-                          <div className="message-bubble-card" style={{ background: '#FFFFFF', border: '1px solid #EAEAEA', borderRadius: '12px', padding: '16px' }}>
-                            {renderMessageContent(msg.content)}
-                            
-                            {/* AI 回答右下角的赞踩微标反馈按钮 */}
-                            {!isUser && (
-                              <div className="message-feedback-row">
-                                <button type="button" className="feedback-mini-btn" title="反馈功能暂未接入" disabled>
-                                  <ThumbsUp size={14} strokeWidth={1.5} />
-                                </button>
-                                <button type="button" className="feedback-mini-btn" title="反馈功能暂未接入" disabled>
-                                  <ThumbsDown size={14} strokeWidth={1.5} />
-                                </button>
-                              </div>
-                            )}
-                          </div>
+                          {!isUser && index === messages.length - 1 && currentStep >= 0 && currentStep <= 5 ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: '100%' }}>
+                              {currentStep <= 5 && (
+                                <div className={`thinking-card-wrapper ${currentStep === 5 ? 'fade-out' : ''}`}>
+                                  <div className="thinking-card-header">
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                      <Hexagon size={14} strokeWidth={1.5} className="thinking-logo-icon" />
+                                      <span className="thinking-card-title">深度思考中</span>
+                                    </div>
+                                  </div>
+                                  <div className="thinking-card-steps">
+                                    {[
+                                      { id: 'UNDERSTANDING', text: '理解当前问题...' },
+                                      { id: 'REWRITE', text: '多轮对话查询重写...' },
+                                      { id: 'RETRIEVING', text: '正在检索知识库...' },
+                                      { id: 'RERANKING', text: '正在重排检索文档...' },
+                                      { id: 'GENERATING', text: '正在生成流式回答...' }
+                                    ].map((step, idx) => {
+                                      const isCompleted = idx < currentStep || currentStep === 5;
+                                      const isActive = idx === currentStep && currentStep < 5;
+                                      const isPending = idx > currentStep && currentStep < 5;
+
+                                      return (
+                                        <div key={step.id} className={`thinking-step-row ${isCompleted ? 'completed' : isActive ? 'active' : 'pending'}`}>
+                                          <div className="thinking-step-indicator">
+                                            {isCompleted ? (
+                                              <Check size={10} strokeWidth={3} className="check-icon" />
+                                            ) : isActive ? (
+                                              <span className="thinking-step-dot active"></span>
+                                            ) : (
+                                              <span className="thinking-step-dot pending"></span>
+                                            )}
+                                          </div>
+                                          <span className="thinking-step-text">{step.text}</span>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              )}
+                              {currentStep === 5 && (
+                                <div className="message-bubble-card fade-in" style={{ background: '#FFFFFF', border: '1px solid #EAEAEA', borderRadius: '12px', padding: '16px' }}>
+                                  {renderMessageContent(msg.content)}
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="message-bubble-card" style={{ background: '#FFFFFF', border: '1px solid #EAEAEA', borderRadius: '12px', padding: '16px' }}>
+                              {renderMessageContent(msg.content)}
+                            </div>
+                          )}
                           
                           <span style={{ fontSize: '11px', color: '#9CA3AF', marginTop: '6px', display: 'inline-block' }}>
                             {isUser ? '21:54' : '21:55'}
@@ -1304,39 +1609,80 @@ function App() {
                         {/* 最后一个 AI 回复下方，如果存在引用来源，渲染垂直卡片列表 */}
                         {!isUser && index === messages.length - 1 && currentCitations.length > 0 && (
                           <div className="citations-block-wrapper">
-                            <div className="citations-block-title-row">
-                              <span className="citations-block-title">引用来源</span>
-                              <span className="citations-block-count-badge">{currentCitations.length}</span>
+                            <div 
+                              className="citations-toggle-header" 
+                              onClick={() => setIsCitationsExpanded(!isCitationsExpanded)}
+                              style={{ 
+                                cursor: 'pointer', 
+                                display: 'inline-flex', 
+                                alignItems: 'center', 
+                                gap: '6px',
+                                padding: '4px 0',
+                                userSelect: 'none'
+                              }}
+                            >
+                              <span className="citations-block-title" style={{ fontSize: '13px', fontWeight: '600', color: '#4F46E5' }}>
+                                引用来源 ({currentCitations.length})
+                              </span>
+                              <ChevronRight 
+                                size={14} 
+                                style={{ 
+                                  transform: isCitationsExpanded ? 'rotate(90deg)' : 'rotate(0deg)', 
+                                  transition: 'transform 0.2s ease',
+                                  color: '#4F46E5'
+                                }} 
+                              />
                             </div>
-                            <div className="citations-vertical-list">
-                              {currentCitations.map((c, cIdx) => (
-                                <div key={cIdx} className="citation-vertical-card">
-                                  <div className="citation-vertical-card-left">
-                                    <div className="citation-vertical-card-icon-box">
-                                      <FileText size={16} strokeWidth={1.5} />
-                                    </div>
-                                    <div className="citation-vertical-card-info">
-                                      <div className="citation-vertical-card-title-row">
-                                        <span className="citation-vertical-card-name">{getCitationFilename(c)}</span>
-                                        <span className="citation-vertical-card-page">第 {c.page || cIdx + 1} 页</span>
-                                      </div>
-                                      <span className="citation-vertical-card-snippet" title={c.content}>
-                                        {c.content}
-                                      </span>
-                                    </div>
-                                  </div>
-                                  <button 
-                                    type="button" 
-                                    className="citation-vertical-card-btn"
-                                    onClick={() => {
-                                      openChunkPreview(getCitationFilename(c));
+                            
+                            {isCitationsExpanded && (
+                              <div className="citations-list-compact" style={{ 
+                                maxHeight: '120px', 
+                                overflowY: 'auto', 
+                                marginTop: '8px', 
+                                display: 'flex', 
+                                flexDirection: 'column', 
+                                gap: '6px',
+                                paddingRight: '4px'
+                              }}>
+                                {currentCitations.map((c, cIdx) => (
+                                  <div 
+                                    key={cIdx} 
+                                    className="citation-compact-item"
+                                    onClick={() => openChunkPreview(getCitationFilename(c))}
+                                    style={{ 
+                                      display: 'flex', 
+                                      alignItems: 'center', 
+                                      justifyContent: 'space-between',
+                                      padding: '6px 10px',
+                                      background: '#F9FAFB',
+                                      border: '1px solid #F3F4F6',
+                                      borderRadius: '6px',
+                                      cursor: 'pointer',
+                                      transition: 'background 0.2s ease'
                                     }}
+                                    onMouseEnter={(e) => e.currentTarget.style.background = '#EEF2FF'}
+                                    onMouseLeave={(e) => e.currentTarget.style.background = '#F9FAFB'}
                                   >
-                                    查看
-                                  </button>
-                                </div>
-                              ))}
-                            </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
+                                      <span style={{ fontSize: '11px', fontWeight: '600', color: '#4F46E5', background: '#EEF2FF', padding: '1px 5px', borderRadius: '4px', flexShrink: 0 }}>
+                                        [{cIdx + 1}]
+                                      </span>
+                                      <span style={{ fontSize: '12px', color: '#374151', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                                        {getCitationFilename(c)}
+                                      </span>
+                                      {c.page && (
+                                        <span style={{ fontSize: '11px', color: '#6B7280', flexShrink: 0 }}>
+                                          (第 {c.page} 页)
+                                        </span>
+                                      )}
+                                    </div>
+                                    <span style={{ fontSize: '11px', color: '#4F46E5', fontWeight: '500', flexShrink: 0 }}>
+                                      点击预览 ➔
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
@@ -1377,10 +1723,17 @@ function App() {
         );
       })()}
 
-      <div className="right-panel">
+      {!rightPanelCollapsed && (
+        <div className="resizer-bar vertical-resizer" onMouseDown={handleRightResizeMouseDown} />
+      )}
+
+      <div 
+        className={`right-panel ${rightPanelCollapsed ? 'collapsed' : ''}`}
+        style={{ width: rightPanelCollapsed ? 0 : `${rightPanelWidth}px` }}
+      >
         {developerMode ? (
           /* 🟢 开发模式下的头部控制栏 (带保存、分享按钮以及高亮的 Developer 选项卡) */
-          <div className="dev-top-actions-row" style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '16px', marginBottom: '24px' }}>
+          <div className="dev-top-actions-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '16px', marginBottom: '24px' }}>
             <div style={{ display: 'flex', gap: '8px' }}>
               <button type="button" className="dev-action-btn" title="保存当前会话" onClick={handleSaveConversation}>
                 <FileText size={14} strokeWidth={1.5} style={{ color: '#9CA3AF' }} />
@@ -1392,30 +1745,52 @@ function App() {
               </button>
             </div>
             
-            <button 
-              type="button" 
-              className="panel-tab-trigger active" 
-              style={{ paddingBottom: '0', borderBottom: 'none', fontWeight: '600', color: 'var(--accent-color)' }}
-            >
-              Developer
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <button 
+                type="button" 
+                className="panel-tab-trigger active" 
+                style={{ paddingBottom: '0', borderBottom: 'none', fontWeight: '600', color: 'var(--accent-color)' }}
+              >
+                Developer
+              </button>
+              <button 
+                type="button" 
+                className="panel-collapse-btn" 
+                onClick={() => setRightPanelCollapsed(true)} 
+                title="收起右面板"
+                style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', color: '#9CA3AF' }}
+              >
+                <ChevronRight size={16} strokeWidth={1.5} />
+              </button>
+            </div>
           </div>
         ) : (
           /* ⚪ 普通模式下的双并列 Tabs (Knowledge / Sources) */
-          <div className="panel-tabs-header">
+          <div className="panel-tabs-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: '24px' }}>
+              <button 
+                type="button"
+                className={`panel-tab-trigger ${activeRightTab === 'kb' ? 'active' : ''}`} 
+                onClick={() => setActiveRightTab('kb')}
+              >
+                Knowledge
+              </button>
+              <button 
+                type="button"
+                className={`panel-tab-trigger ${activeRightTab === 'citations' ? 'active' : ''}`} 
+                onClick={() => setActiveRightTab('citations')}
+              >
+                Sources
+              </button>
+            </div>
             <button 
-              type="button"
-              className={`panel-tab-trigger ${activeRightTab === 'kb' ? 'active' : ''}`} 
-              onClick={() => setActiveRightTab('kb')}
+              type="button" 
+              className="panel-collapse-btn" 
+              onClick={() => setRightPanelCollapsed(true)} 
+              title="收起右面板"
+              style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', color: '#9CA3AF' }}
             >
-              Knowledge
-            </button>
-            <button 
-              type="button"
-              className={`panel-tab-trigger ${activeRightTab === 'citations' ? 'active' : ''}`} 
-              onClick={() => setActiveRightTab('citations')}
-            >
-              Sources
+              <ChevronRight size={16} strokeWidth={1.5} />
             </button>
           </div>
         )}
@@ -1713,6 +2088,29 @@ function App() {
           </div>
         ))}
       </div>
+
+      {/* 左右侧边栏悬浮展开按钮 */}
+      {sidebarCollapsed && (
+        <button 
+          type="button"
+          className="floating-expand-btn left-expand" 
+          onClick={() => setSidebarCollapsed(false)}
+          title="展开侧边栏"
+        >
+          <ChevronRight size={16} strokeWidth={1.5} />
+        </button>
+      )}
+      
+      {rightPanelCollapsed && (
+        <button 
+          type="button"
+          className="floating-expand-btn right-expand" 
+          onClick={() => setRightPanelCollapsed(false)}
+          title="展开右面板"
+        >
+          <ChevronLeft size={16} strokeWidth={1.5} />
+        </button>
+      )}
     </div>
   );
 }
