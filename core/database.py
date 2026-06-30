@@ -155,6 +155,14 @@ def _cleanup_tenant_upload_dir(tenant_id: str) -> None:
         shutil.rmtree(upload_dir)
 
 
+def cleanup_tenant_resources(db, tenant_id: str) -> None:
+    db.query(DocumentRecord).filter(DocumentRecord.tenant_id == tenant_id).delete()
+    db.query(ChatHistory).filter(ChatHistory.tenant_id == tenant_id).delete()
+    if not clear_all_data(tenant_id):
+        raise RuntimeError(f"Vector store cleanup failed for tenant {tenant_id}.")
+    _cleanup_tenant_upload_dir(tenant_id)
+
+
 def cleanup_expired_temporary_visitors() -> int:
     """Delete expired visitor tenants and their tenant-scoped data."""
     db = SessionLocal()
@@ -173,10 +181,7 @@ def cleanup_expired_temporary_visitors() -> int:
         for user in expired_users:
             try:
                 tenant_id = user.tenant_id
-                db.query(DocumentRecord).filter(DocumentRecord.tenant_id == tenant_id).delete()
-                db.query(ChatHistory).filter(ChatHistory.tenant_id == tenant_id).delete()
-                clear_all_data(tenant_id)
-                _cleanup_tenant_upload_dir(tenant_id)
+                cleanup_tenant_resources(db, tenant_id)
                 db.delete(user)
                 db.commit()
                 cleaned_count += 1

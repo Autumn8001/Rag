@@ -20,10 +20,10 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, Query, Depends
 from markitdown import MarkItDown
 from sqlalchemy.orm import Session
 
-from core.database import get_db
+from core.database import cleanup_tenant_resources, get_db
 from core.crud import get_document_by_hash, create_document_record
 from core.models import DocumentRecord, ChatHistory, User
-from core.rag_engine import clear_all_data, ingest_knowledge, remove_document
+from core.rag_engine import ingest_knowledge, remove_document
 from core.auth import get_current_user
 from core.config import settings
 
@@ -304,20 +304,8 @@ async def clear_knowledge_base(
     """清空当前租户的向量库、BM25 索引，以及数据库中的文档记录和对话历史。"""
     tenant_id = current_user.tenant_id
     try:
-        db.query(DocumentRecord).filter(DocumentRecord.tenant_id == tenant_id).delete()
-        db.query(ChatHistory).filter(ChatHistory.tenant_id == tenant_id).delete()
-        success = clear_all_data(tenant_id)
-        if not success:
-            raise ValueError("Vector store cleanup failed.")
+        cleanup_tenant_resources(db, tenant_id)
         db.commit()
-        try:
-            _cleanup_tenant_upload_dir(tenant_id)
-        except Exception as cleanup_error:
-            logger.warning(
-                "Tenant %s data was cleared, but upload directory cleanup failed: %s",
-                tenant_id,
-                cleanup_error,
-            )
         return {"status": "success", "message": "Knowledge base cleared successfully."}
     except Exception as e:
         db.rollback()
@@ -511,4 +499,3 @@ async def delete_document(
         db.rollback()
         logger.error("Failed to delete document '%s' for tenant %s: %s", filename, tenant_id, e)
         raise HTTPException(status_code=500, detail=str(e))
-

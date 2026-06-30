@@ -15,13 +15,13 @@ import logging
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import and_, func
+from sqlalchemy import and_, func, text
 from sqlalchemy.orm import Session
 
-from core.database import get_db
+from core.database import engine, get_db
 from core.crud import create_chat_record, get_chat_history
 from core.models import ChatHistory, User
-from core.rag_engine import METADATA_START_MARKER, stream_rag_answer
+from core.rag_engine import METADATA_START_MARKER, rag_engine, stream_rag_answer
 from core.auth import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -45,7 +45,50 @@ class ChatRequest(BaseModel):
 
 @router.get("/health", summary="Service health check")
 async def health_check():
-    return {"status": "ok", "message": "RAG engine is running."}
+    components = {
+        "api": {"name": "API", "status": "ok", "detail": "FastAPI ready"},
+        "database": {
+            "name": {
+                "postgresql": "PostgreSQL",
+                "sqlite": "SQLite",
+            }.get(engine.dialect.name, engine.dialect.name),
+            "status": "unknown",
+            "detail": engine.dialect.name,
+        },
+        "vectorstore": {"name": "Chroma", "status": "unknown", "detail": "vector store"},
+    }
+
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+        components["database"]["status"] = "ok"
+        components["database"]["detail"] = "reachable"
+    except Exception as exc:
+        logger.warning("Database health check failed: %s", exc)
+        components["database"]["status"] = "error"
+        components["database"]["detail"] = str(exc)
+
+    try:
+        vectorstore = rag_engine._get_vectorstore()
+        if vectorstore is None:
+            raise RuntimeError("vector store unavailable")
+        components["vectorstore"]["status"] = "ok"
+        components["vectorstore"]["detail"] = "reachable"
+    except Exception as exc:
+        logger.warning("Vector store health check failed: %s", exc)
+        components["vectorstore"]["status"] = "error"
+        components["vectorstore"]["detail"] = str(exc)
+
+    overall_status = (
+        "ok"
+        if all(component["status"] == "ok" for component in components.values())
+        else "degraded"
+    )
+    return {
+        "status": overall_status,
+        "message": "RAG engine health checked.",
+        "components": components,
+    }
 
 
 @router.post("/chat", summary="Streaming RAG Q&A")

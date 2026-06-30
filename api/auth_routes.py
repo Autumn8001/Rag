@@ -29,12 +29,7 @@ def _build_token_payload(user: User, expires_at: datetime | None = None) -> dict
             "sub": user.username,
             "user_id": user.id,
             "tenant_id": user.tenant_id,
-        },
-        expires_delta=(
-            max(expires_at - _utc_now_naive(), timedelta(minutes=1))
-            if expires_at
-            else None
-        ),
+        }
     )
     return {
         "access_token": access_token,

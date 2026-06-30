@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+﻿import React, { useState, useEffect, useRef } from 'react';
 import { 
   Lock, User, LogIn, UserPlus, Send, Plus, 
   Trash2, Database, MessageSquare, Shield, 
@@ -12,6 +12,11 @@ import './App.css';
 // 后端 API 基准地址 (修改为防冲突的 8010 端口)
 const API_BASE = 'http://localhost:8010/api/v1';
 const PAGE_SIZE = 10;
+const DEFAULT_HEALTH_COMPONENTS = [
+  { key: 'database', name: 'PostgreSQL', status: 'unknown' },
+  { key: 'vectorstore', name: 'Chroma', status: 'unknown' },
+  { key: 'api', name: 'API', status: 'unknown' }
+];
 
 // 链路观测 Demo Fallback 数据
 const FALLBACK_TRACES_DEMO = [
@@ -26,7 +31,7 @@ const FALLBACK_TRACES_DEMO = [
     child_stages: [
       { name: "QueryRewriteAgent", type: "rewriter", status: "success" },
       { name: "ChromaVectorRetrieval", type: "retriever", status: "success" },
-      { name: "SQLiteBM25Retrieval", type: "retriever", status: "success" },
+      { name: "PostgreSQLBM25Retrieval", type: "retriever", status: "success" },
       { name: "RRFHybridFusion", type: "fusion", status: "success" },
       { name: "FlashrankRerank", type: "reranker", status: "success" },
       { name: "CriticAgentEvaluation", type: "critic", status: "success" }
@@ -84,6 +89,7 @@ function App() {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [developerMode, setDeveloperMode] = useState(false);
   const [healthStatus, setHealthStatus] = useState('healthy'); 
+  const [healthComponents, setHealthComponents] = useState(DEFAULT_HEALTH_COMPONENTS);
   const [traces, setTraces] = useState([]); 
 
   // 全局非阻塞通知 Toast 队列
@@ -254,6 +260,44 @@ function App() {
     showToast('已登出', '您已安全退出当前租户空间。', 'info');
   };
 
+  const getCitationFilename = (citation) => citation?.filename || citation?.source || '';
+  const getCitationScore = (citation) => citation?.rrf_score || citation?.score || citation?.similarity || null;
+  const latestTrace = traces[0] || null;
+  const traceStages = latestTrace?.child_stages || [];
+  const firstPreviewDocName = getCitationFilename(currentCitations[0]) || documents[0]?.source || null;
+  const chunkPreviewRows = currentCitations.length > 0
+    ? currentCitations.slice(0, 4).map((citation, index) => ({
+        id: index + 1,
+        filename: getCitationFilename(citation),
+        page: citation.page,
+        score: getCitationScore(citation),
+      }))
+    : documents.slice(0, 4).map((document, index) => ({
+        id: index + 1,
+        filename: document.source,
+        page: null,
+        score: null,
+      }));
+  const retrievalHitCount = currentCitations.length;
+
+  const openChunkPreview = (filename = firstPreviewDocName) => {
+    if (!filename) {
+      showToast('暂无切片', '请先上传文档或执行一次带引用的问答。', 'info');
+      return;
+    }
+    setPreviewPage(1);
+    setPreviewDocName(filename);
+  };
+
+  const handleSaveConversation = () => {
+    if (!activeSessionId || messages.length === 0) {
+      showToast('暂无可保存会话', '请先开始一段对话。', 'info');
+      return;
+    }
+    fetchSessions();
+    showToast('已保存', '当前会话已由后端历史记录持久化。', 'success');
+  };
+
   // --- 初始化与健康探针 ---
   useEffect(() => {
     if (token) {
@@ -280,13 +324,25 @@ function App() {
     try {
       const res = await fetch(`${API_BASE}/health`);
       const data = await res.json();
-      if (res.ok && data.status === 'ok') {
+      if (res.ok && (data.status === 'ok' || data.status === 'degraded')) {
         setHealthStatus('healthy');
+        if (data.components) {
+          setHealthComponents(
+            DEFAULT_HEALTH_COMPONENTS.map((component) => {
+              const source = data.components[component.key];
+              return source
+                ? { ...component, name: source.name || component.name, status: source.status || 'unknown' }
+                : component;
+            })
+          );
+        }
       } else {
         setHealthStatus('unhealthy');
+        setHealthComponents(DEFAULT_HEALTH_COMPONENTS.map((component) => ({ ...component, status: 'error' })));
       }
     } catch (e) {
       setHealthStatus('unhealthy');
+      setHealthComponents(DEFAULT_HEALTH_COMPONENTS.map((component) => ({ ...component, status: 'error' })));
     }
   };
 
@@ -362,12 +418,12 @@ function App() {
       const data = await res.json();
       if (res.ok) {
         const resTraces = data.data || [];
-        setTraces(resTraces.length === 0 ? FALLBACK_TRACES_DEMO : resTraces);
+        setTraces(resTraces);
       } else {
-        setTraces(FALLBACK_TRACES_DEMO);
+        setTraces([]);
       }
     } catch (err) {
-      setTraces(FALLBACK_TRACES_DEMO);
+      setTraces([]);
     }
   };
 
@@ -898,6 +954,18 @@ function App() {
   // --- 主控制台页面渲染 (三栏自适应极简结构) ---
   return (
     <div className="console-layout">
+      <input
+        type="file"
+        id="kb-file-input"
+        style={{ display: 'none' }}
+        onChange={(e) => {
+          if (e.target.files && e.target.files.length > 0) {
+            handleUploadFile(e.target.files[0]);
+            e.target.value = '';
+          }
+        }}
+        disabled={isUploading}
+      />
       
       {/* 🔑 STEP 2: 重构左侧 Sidebar (按大厂规范进行 280px 设计定位) */}
       <div className="sidebar-panel">
@@ -1171,7 +1239,7 @@ function App() {
                     <div className="chat-flow-header-meta">
                       <span>今天 21:54</span>
                       <span>·</span>
-                      <span>来自 员工手册.pdf 等 3 个来源</span>
+                      <span>{currentCitations.length ? `来自 ${currentCitations.length} 个真实来源` : `已索引 ${documents.length} 个文档`}</span>
                       <span className="chat-flow-header-meta-chevron">
                         <ChevronRight size={14} style={{ transform: 'rotate(90deg)' }} />
                       </span>
@@ -1218,10 +1286,10 @@ function App() {
                             {/* AI 回答右下角的赞踩微标反馈按钮 */}
                             {!isUser && (
                               <div className="message-feedback-row">
-                                <button type="button" className="feedback-mini-btn" title="赞">
+                                <button type="button" className="feedback-mini-btn" title="反馈功能暂未接入" disabled>
                                   <ThumbsUp size={14} strokeWidth={1.5} />
                                 </button>
-                                <button type="button" className="feedback-mini-btn" title="踩">
+                                <button type="button" className="feedback-mini-btn" title="反馈功能暂未接入" disabled>
                                   <ThumbsDown size={14} strokeWidth={1.5} />
                                 </button>
                               </div>
@@ -1249,7 +1317,7 @@ function App() {
                                     </div>
                                     <div className="citation-vertical-card-info">
                                       <div className="citation-vertical-card-title-row">
-                                        <span className="citation-vertical-card-name">{c.filename}</span>
+                                        <span className="citation-vertical-card-name">{getCitationFilename(c)}</span>
                                         <span className="citation-vertical-card-page">第 {c.page || cIdx + 1} 页</span>
                                       </div>
                                       <span className="citation-vertical-card-snippet" title={c.content}>
@@ -1261,11 +1329,7 @@ function App() {
                                     type="button" 
                                     className="citation-vertical-card-btn"
                                     onClick={() => {
-                                      setPreviewDocName(c.filename);
-                                      setPreviewChunks([
-                                        { chunk_id: 'chunk_match_1', content: c.content },
-                                        { chunk_id: 'chunk_match_2', content: 'Chroma 检索到的补充关联上下文切片数据片段...' }
-                                      ]);
+                                      openChunkPreview(getCitationFilename(c));
                                     }}
                                   >
                                     查看
@@ -1318,11 +1382,11 @@ function App() {
           /* 🟢 开发模式下的头部控制栏 (带保存、分享按钮以及高亮的 Developer 选项卡) */
           <div className="dev-top-actions-row" style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '16px', marginBottom: '24px' }}>
             <div style={{ display: 'flex', gap: '8px' }}>
-              <button type="button" className="dev-action-btn" title="保存当前会话">
+              <button type="button" className="dev-action-btn" title="保存当前会话" onClick={handleSaveConversation}>
                 <FileText size={14} strokeWidth={1.5} style={{ color: '#9CA3AF' }} />
                 <span style={{ color: '#222222' }}>保存</span>
               </button>
-              <button type="button" className="dev-action-btn" title="分享当前会话">
+              <button type="button" className="dev-action-btn" title="分享功能暂未接入" disabled>
                 <ExternalLink size={14} strokeWidth={1.5} style={{ color: '#9CA3AF' }} />
                 <span style={{ color: '#222222' }}>分享</span>
               </button>
@@ -1364,80 +1428,42 @@ function App() {
               {/* 1. 系统健康状态 */}
               <h3 className="dev-section-title">系统健康状态</h3>
               <div className="dev-health-grid">
-                <div className="dev-health-card">
-                  <div className="dev-health-card-name">SQLite</div>
-                  <div className="dev-health-card-status" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px', color: '#22C55E' }}>
-                    <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#22C55E', display: 'inline-block' }}></span>
-                    <span>正常</span>
-                  </div>
-                </div>
-                <div className="dev-health-card">
-                  <div className="dev-health-card-name">Chroma</div>
-                  <div className="dev-health-card-status" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px', color: '#22C55E' }}>
-                    <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#22C55E', display: 'inline-block' }}></span>
-                    <span>正常</span>
-                  </div>
-                </div>
-                <div className="dev-health-card">
-                  <div className="dev-health-card-name">API</div>
-                  <div className="dev-health-card-status" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px', color: '#22C55E' }}>
-                    <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#22C55E', display: 'inline-block' }}></span>
-                    <span>正常</span>
-                  </div>
-                </div>
+                {healthComponents.map((component) => {
+                  const isOk = component.status === 'ok';
+                  const statusColor = isOk ? '#22C55E' : component.status === 'unknown' ? '#9CA3AF' : '#EF4444';
+                  return (
+                    <div key={component.key} className="dev-health-card">
+                      <div className="dev-health-card-name">{component.name}</div>
+                      <div className="dev-health-card-status" style={{ color: statusColor }}>
+                        <span style={{ background: statusColor }}></span>
+                        <span>{isOk ? 'OK' : component.status === 'unknown' ? 'Pending' : 'Error'}</span>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
 
               {/* 2. TRACE PIPELINE */}
               <h3 className="dev-trace-uppercase-title">TRACE PIPELINE</h3>
               <div className="dev-trace-list">
-                <div className="dev-trace-item-row">
-                  <div className="dev-trace-item-left">
-                    <span className="dev-trace-index">1</span>
-                    <span className="dev-trace-name">Query Rewrite</span>
-                  </div>
-                  <div className="dev-trace-right">
-                    <span className="dev-trace-latency">128ms</span>
-                    <span className="dev-trace-check-box">
-                      <Check size={14} strokeWidth={2.5} />
-                    </span>
-                  </div>
-                </div>
-                <div className="dev-trace-item-row">
-                  <div className="dev-trace-item-left">
-                    <span className="dev-trace-index">2</span>
-                    <span className="dev-trace-name">Retrieve (Vector Search)</span>
-                  </div>
-                  <div className="dev-trace-right">
-                    <span className="dev-trace-latency">298ms</span>
-                    <span className="dev-trace-check-box">
-                      <Check size={14} strokeWidth={2.5} />
-                    </span>
-                  </div>
-                </div>
-                <div className="dev-trace-item-row">
-                  <div className="dev-trace-item-left">
-                    <span className="dev-trace-index">3</span>
-                    <span className="dev-trace-name">Rerank (RRF)</span>
-                  </div>
-                  <div className="dev-trace-right">
-                    <span className="dev-trace-latency">156ms</span>
-                    <span className="dev-trace-check-box">
-                      <Check size={14} strokeWidth={2.5} />
-                    </span>
-                  </div>
-                </div>
-                <div className="dev-trace-item-row">
-                  <div className="dev-trace-item-left">
-                    <span className="dev-trace-index">4</span>
-                    <span className="dev-trace-name">Generate (LLM)</span>
-                  </div>
-                  <div className="dev-trace-right">
-                    <span className="dev-trace-latency">742ms</span>
-                    <span className="dev-trace-check-box">
-                      <Check size={14} strokeWidth={2.5} />
-                    </span>
-                  </div>
-                </div>
+                {traceStages.length === 0 ? (
+                  <div className="dev-empty-state">暂无真实 Trace，请先发起一次问答。</div>
+                ) : (
+                  traceStages.map((stage, stageIndex) => (
+                    <div key={`${stage.name}-${stageIndex}`} className="dev-trace-item-row">
+                      <div className="dev-trace-item-left">
+                        <span className="dev-trace-index">{stageIndex + 1}</span>
+                        <span className="dev-trace-name">{stage.name}</span>
+                      </div>
+                      <div className="dev-trace-right">
+                        <span className="dev-trace-latency">{stage.latency_ms ? `${stage.latency_ms}ms` : 'live'}</span>
+                        <span className="dev-trace-check-box">
+                          <Check size={14} strokeWidth={2.5} />
+                        </span>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
 
               {/* 3. 检索详情 */}
@@ -1445,15 +1471,15 @@ function App() {
                 <h3 className="dev-section-title" style={{ marginBottom: 0 }}>检索详情</h3>
                 <span className="dev-retrieve-badge-topk">Top K: 8</span>
               </div>
-              <div className="dev-retrieve-grid-card" onClick={() => setPreviewDocName(currentCitations[0]?.filename || "员工手册.pdf")}>
+              <div className="dev-retrieve-grid-card" onClick={() => openChunkPreview()}>
                 <div className="dev-retrieve-2x2">
                   <div className="dev-retrieve-item">
                     <span className="dev-retrieve-label">命中率 (Rerank TopK)</span>
-                    <span className="dev-retrieve-val">8/8</span>
+                    <span className="dev-retrieve-val">{retrievalHitCount ? `${retrievalHitCount}/8` : '0/8'}</span>
                   </div>
                   <div className="dev-retrieve-item">
                     <span className="dev-retrieve-label">来源文档数</span>
-                    <span className="dev-retrieve-val">{documents.length || 3}</span>
+                    <span className="dev-retrieve-val">{documents.length}</span>
                   </div>
                   <div className="dev-retrieve-item">
                     <span className="dev-retrieve-label">向量库</span>
@@ -1475,34 +1501,26 @@ function App() {
                 <button 
                   type="button" 
                   className="dev-chunks-expand-btn"
-                  onClick={() => setPreviewDocName(currentCitations[0]?.filename || "员工手册.pdf")}
+                  onClick={() => openChunkPreview()}
                 >
                   <span>展开</span>
                   <ChevronRight size={12} strokeWidth={1.5} />
                 </button>
               </div>
               <div className="dev-chunks-list">
-                <div className="dev-chunk-item-line">
-                  <div className="dev-chunk-left">
-                    <span className="dev-chunk-hash-tag">#1</span>
-                    <span className="dev-chunk-meta-text">员工手册.pdf - 第 12 页</span>
-                  </div>
-                  <span className="dev-chunk-score-text">相似度 0.865</span>
-                </div>
-                <div className="dev-chunk-item-line">
-                  <div className="dev-chunk-left">
-                    <span className="dev-chunk-hash-tag">#2</span>
-                    <span className="dev-chunk-meta-text">考勤制度.md - 第 3 页</span>
-                  </div>
-                  <span className="dev-chunk-score-text">相似度 0.742</span>
-                </div>
-                <div className="dev-chunk-item-line">
-                  <div className="dev-chunk-left">
-                    <span className="dev-chunk-hash-tag">#3</span>
-                    <span className="dev-chunk-meta-text">福利政策.pdf - 第 8 页</span>
-                  </div>
-                  <span className="dev-chunk-score-text">相似度 0.681</span>
-                </div>
+                {chunkPreviewRows.length === 0 ? (
+                  <div className="dev-empty-state">暂无真实切片，请先上传文档或执行一次问答。</div>
+                ) : (
+                  chunkPreviewRows.map((row) => (
+                    <div key={`${row.filename}-${row.id}`} className="dev-chunk-item-line" onClick={() => openChunkPreview(row.filename)}>
+                      <div className="dev-chunk-left">
+                        <span className="dev-chunk-hash-tag">#{row.id}</span>
+                        <span className="dev-chunk-meta-text">{row.filename}{row.page ? ` - 第 ${row.page} 页` : ''}</span>
+                      </div>
+                      <span className="dev-chunk-score-text">{row.score ? Number(row.score).toFixed(3) : 'Indexed'}</span>
+                    </div>
+                  ))
+                )}
               </div>
 
             </div>
@@ -1567,7 +1585,7 @@ function App() {
                   >
                     <input 
                       type="file" 
-                      id="kb-file-input" 
+                      id="kb-file-input-panel" 
                       style={{ display: 'none' }} 
                       onChange={(e) => {
                         if (e.target.files && e.target.files.length > 0) {
@@ -1608,8 +1626,8 @@ function App() {
                     currentCitations.map((c, idx) => (
                       <div key={idx} id={`citation-card-${idx}`} className="source-item-card">
                         <div className="source-card-header">
-                          <span className="source-doc-title" title={c.filename}>
-                            [{idx + 1}] {c.filename}
+                          <span className="source-doc-title" title={getCitationFilename(c)}>
+                            [{idx + 1}] {getCitationFilename(c)}
                           </span>
                           <span className="source-doc-score">Match</span>
                         </div>
@@ -1638,15 +1656,18 @@ function App() {
               </button>
             </div>
             <div className="audit-drawer-body">
-              {previewChunks.map((chunk, idx) => (
+              {previewChunks.length === 0 ? (
+                <div className="audit-empty-state">该文档暂无可展示切片。</div>
+              ) : (
+                previewChunks.map((chunk, idx) => (
                 <div key={idx} className="audit-chunk-card">
                   <div className="audit-chunk-meta-row">
                     <span className="audit-chunk-index">#{idx + 1}</span>
-                    <span className="audit-chunk-id">ID: {chunk.chunk_id.substring(0, 12)}...</span>
+                    <span className="audit-chunk-id">ID: {(chunk.chunk_id || '').substring(0, 12)}...</span>
                   </div>
                   <div className="audit-chunk-content">{chunk.content}</div>
                 </div>
-              ))}
+              )))}
             </div>
           </div>
         </div>

@@ -38,6 +38,10 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
     return jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 
+def temporary_visitor_expiry_from(now: datetime) -> datetime:
+    return now + timedelta(minutes=settings.VISITOR_SESSION_TTL_MINUTES)
+
+
 def _build_auth_exception(detail: str) -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -84,6 +88,7 @@ async def get_current_user(
             if user.expires_at <= now:
                 raise _build_auth_exception("Temporary visitor session has expired.")
             user.last_active_at = now
+            user.expires_at = temporary_visitor_expiry_from(now)
             db.commit()
             db.refresh(user)
         return user
