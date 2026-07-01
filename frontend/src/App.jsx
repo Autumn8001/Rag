@@ -619,6 +619,10 @@ function App() {
 
   // 14. 切换会话并读取对话记录
   const handleSelectSession = async (sessionId) => {
+    activeChatAbortRef.current?.abort?.();
+    activeChatAbortRef.current = null;
+    setIsSending(false);
+    setCurrentStep(-1);
     setActiveSessionId(sessionId);
     setMessages([]);
     setCurrentCitations([]);
@@ -653,10 +657,15 @@ function App() {
 
   // 15. 新建会话
   const handleCreateNewChat = () => {
+    activeChatAbortRef.current?.abort?.();
+    activeChatAbortRef.current = null;
+    setIsSending(false);
+    setCurrentStep(-1);
     setActiveSessionId('');
     setMessages([]);
     setIsCitationsExpanded(false);
     setCurrentCitations([]);
+    fetchSessions();
   };
 
   // 16. 删除单个会话
@@ -777,6 +786,7 @@ function App() {
     activeChatAbortRef.current?.abort?.();
     const abortController = new AbortController();
     activeChatAbortRef.current = abortController;
+    const isCurrentChatRequest = () => activeChatAbortRef.current === abortController;
 
     const userText = textToSend;
     setInputMessage('');
@@ -851,14 +861,16 @@ function App() {
 
       if (!res.ok) {
         const errorData = await res.json();
-        setMessages(prev => {
-          const next = [...prev];
-          next[next.length - 1] = { role: 'assistant', content: `[错误] ${errorData.detail || '服务不可用'}` };
-          return next;
-        });
-        clearInterval(intervalId);
-        setCurrentStep(5);
-        setIsSending(false);
+        if (isCurrentChatRequest()) {
+          setMessages(prev => {
+            const next = [...prev];
+            next[next.length - 1] = { role: 'assistant', content: `[错误] ${errorData.detail || '服务不可用'}` };
+            return next;
+          });
+          clearInterval(intervalId);
+          setCurrentStep(5);
+          setIsSending(false);
+        }
         return;
       }
 
@@ -908,6 +920,7 @@ function App() {
           if (hasBackendEventsVal) {
             parsedBackendStageVal = 5;
           }
+          setCurrentStep(5);
         }
 
         let displayCtx = cleanCtx;
@@ -962,21 +975,31 @@ function App() {
       }
 
       if (!abortController.signal.aborted && isMountedRef.current) {
-        fetchSessions();
+        await fetchSessions();
+        window.setTimeout(() => {
+          if (isMountedRef.current) {
+            fetchSessions();
+          }
+        }, 350);
       }
     } catch (err) {
       if (err?.name === 'AbortError') {
         return;
       }
-      setMessages(prev => {
-        const next = [...prev];
-        next[next.length - 1] = { role: 'assistant', content: `[错误] 无法建立连接，请确认本地服务已拉起。` };
-        return next;
-      });
+      if (isCurrentChatRequest()) {
+        setMessages(prev => {
+          const next = [...prev];
+          next[next.length - 1] = { role: 'assistant', content: `[错误] 无法建立连接，请确认本地服务已拉起。` };
+          return next;
+        });
+      }
     } finally {
       clearInterval(intervalId);
-      activeChatAbortRef.current = null;
-      if (isMountedRef.current) {
+      const wasCurrentChatRequest = isCurrentChatRequest();
+      if (wasCurrentChatRequest) {
+        activeChatAbortRef.current = null;
+      }
+      if (isMountedRef.current && wasCurrentChatRequest) {
         setCurrentStep(5);
         setIsSending(false);
       }
@@ -1620,7 +1643,6 @@ function App() {
                         value={inputMessage}
                         onChange={(e) => setInputMessage(e.target.value)}
                         placeholder="输入你的问题..."
-                        disabled={isSending}
                       />
                       <button type="submit" className="input-send-btn" disabled={isSending || !inputMessage.trim()}>
                         <Send size={15} strokeWidth={1.5} />
@@ -1638,12 +1660,27 @@ function App() {
                   {/* Figma 风格的顶部大会话标题与来源 Meta 汇总 */}
                   <div className="chat-flow-session-header">
                     <h2 className="chat-flow-header-title">
-                      {sessions.find(s => s.session_id === activeSessionId)?.title || "公司年假有多少天？如何申请加班？员工报销需要哪些材料？"}
+                      {(() => {
+                        const matched = sessions.find(s => s.session_id === activeSessionId);
+                        if (matched && matched.title) return matched.title;
+                        const firstUserMsg = messages.find(m => m.role === 'user');
+                        if (firstUserMsg && firstUserMsg.content) {
+                          return firstUserMsg.content.length > 24 
+                            ? firstUserMsg.content.substring(0, 24) + '...'
+                            : firstUserMsg.content;
+                        }
+                        return "新对话";
+                      })()}
                     </h2>
                     <div className="chat-flow-header-meta">
-                      <span>今天 21:54</span>
+                      <span>
+                        {(() => {
+                          const matched = sessions.find(s => s.session_id === activeSessionId);
+                          return matched && matched.created_at ? matched.created_at : "刚刚";
+                        })()}
+                      </span>
                       <span>·</span>
-                      <span>{currentCitations.length ? `来自 ${currentCitations.length} 个真实来源` : `已索引 ${documents.length} 个文档`}</span>
+                      <span>{currentCitations.length ? `来自 ${currentCitations.length} 个参考来源` : `已关联知识库`}</span>
                       <span className="chat-flow-header-meta-chevron">
                         <ChevronRight size={14} style={{ transform: 'rotate(90deg)' }} />
                       </span>
@@ -1842,7 +1879,6 @@ function App() {
                         value={inputMessage}
                         onChange={(e) => setInputMessage(e.target.value)}
                         placeholder="输入你的问题..."
-                        disabled={isSending}
                       />
                       <span className="input-bar-inner-tip">Shift + Enter 换行</span>
                       <button type="submit" className="input-send-btn" disabled={isSending || !inputMessage.trim()}>

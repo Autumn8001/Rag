@@ -45,16 +45,17 @@ services:
       # 给 RAG 引擎充足的初始化时间（加载 Chroma + 模型初始化）
       start_period: 60s
 
-  # ── 前端：Streamlit UI ────────────────────────────────────────────────────
+  # ── 前端：React/Vite UI ────────────────────────────────────────────────────
   frontend:
     build:
       context: .
       dockerfile: Dockerfile.frontend
+      args:
+        # 【部署提示】：若部署到服务器，请在此处将 localhost 改为您的服务器公网 IP 或域名
+        - VITE_API_BASE_URL=http://stellarbit.site:8010/api/v1
     container_name: rag_frontend
     ports:
       - "5178:80"
-    environment:
-      - VITE_API_BASE_URL=http://backend:8000/api/v1
     depends_on:
       backend:
         condition: service_healthy

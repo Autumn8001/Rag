@@ -144,7 +144,12 @@ async def chat_endpoint(
     return StreamingResponse(
         stream_generator(),
         media_type="text/event-stream",
-        headers={"X-Session-Id": session_id, "Cache-Control": "no-cache"},
+        headers={
+            "X-Session-Id": session_id,
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 

@@ -16,7 +16,6 @@ dependencies = [
     "python-multipart>=0.0.9",
     "pydantic-settings>=2.13.1",
     "requests>=2.31.0",
-    "streamlit>=1.28.0",
     "uvicorn>=0.44.0",
     "psycopg2-binary>=2.9.12",
     "python-jose[cryptography]>=3.5.0",

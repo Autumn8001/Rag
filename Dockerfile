@@ -26,8 +26,11 @@ WORKDIR /app
 COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
-# 复制应用代码
-COPY . .
+# 复制后端应用核心代码（避开前端代码及本地 node_modules 冗余包）
+COPY api/ ./api/
+COPY core/ ./core/
+COPY schemas/ ./schemas/
+COPY main.py ./
 
 # 创建必要的数据目录
 RUN mkdir -p data/uploads data/chroma_db

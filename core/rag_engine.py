@@ -167,7 +167,7 @@ class RAGEngine:
         self.vectorstore = None
         self.bm25_retrievers: dict[str, BM25Retriever | None] = {}
         self.compressor = None
-        self._initialize_reranker()
+
 
     def _build_vectorstore(self):
         return Chroma(
@@ -183,14 +183,21 @@ class RAGEngine:
                 logger.warning("Local Chroma database not found. Waiting for first document upload.")
         return self.vectorstore
 
-    def _initialize_reranker(self):
+    def _get_reranker(self):
+        if self.compressor is not None:
+            return self.compressor
         if flashrank is None:
             logger.info("Flashrank is unavailable, falling back to retrieval without reranking.")
-            return
+            return None
         try:
+            logger.info("Initializing Flashrank Reranker (Lazy Loading)...")
             self.compressor = FlashrankRerank(top_n=8)
+            logger.info("Flashrank Reranker initialized successfully.")
+            return self.compressor
         except Exception as exc:
             logger.warning("Reranker initialization failed: %s", exc)
+            return None
+
 
     def _bm25_file_for_tenant(self, tenant_id: str) -> Path:
         return BASE_DIR / "data" / f"bm25_{tenant_id}.pkl"
@@ -259,34 +266,36 @@ class RAGEngine:
         if not medium_retriever:
             return None
 
-        if self.compressor:
+        reranker = self._get_reranker()
+        if reranker:
             try:
                 return ContextualCompressionRetriever(
-                    base_compressor=self.compressor,
+                    base_compressor=reranker,
                     base_retriever=medium_retriever,
                 )
             except Exception as exc:
                 logger.warning("Tenant reranker creation failed: %s", exc)
+
         return medium_retriever
 
     @traceable(run_type="chain", name="critic_context_evaluation")
     async def evaluate_context(self, question: str, context: str) -> bool:
         eval_prompt = ChatPromptTemplate.from_template(
-            """You are a relevance checker for an enterprise RAG system.
-Decide whether the reference material contains enough evidence to answer the user's question.
+            """你是企业 RAG 系统中的证据相关性判定器。
+请判断参考资料是否包含足够证据回答用户问题。
 
-Rules:
-1. Output YES if the reference directly contains the answer.
-2. Output YES if the reference contains facts that allow the answer to be derived.
-3. Output YES if the question asks whether the document mentions something and the material is clearly about the same topic.
-4. Output NO only if the reference is completely unrelated to the question.
-5. When unsure, prefer YES.
-6. Output only YES or NO.
+判定规则：
+1. 如果参考资料直接包含答案，输出 YES。
+2. 如果参考资料包含可推导答案的事实，输出 YES。
+3. 如果用户问题是在询问文档是否提到某事，且参考资料主题明显相关，输出 YES。
+4. 只有当参考资料与问题完全无关时，才输出 NO。
+5. 不确定时优先输出 YES。
+6. 只能输出 YES 或 NO，不要输出其他解释。
 
-Reference:
+参考资料：
 {context}
 
-Question:
+用户问题：
 {question}
 """
         )
@@ -301,13 +310,16 @@ Question:
 
         history_text = "\n".join(f"{msg['role']}: {msg['content']}" for msg in history)
         rewrite_prompt = ChatPromptTemplate.from_template(
-            """Rewrite the latest user question into a self-contained question.
-Return only the rewritten question.
+            """请把用户的最新问题改写成一个独立、完整、无需依赖上下文也能理解的问题。
+要求：
+1. 只输出改写后的问题，不要解释。
+2. 保持用户原本的语言；如果用户用中文提问，必须输出简体中文。
+3. 不要改变用户原意，不要补充对话中没有的信息。
 
-History:
+对话历史：
 {history}
 
-Latest question:
+最新问题：
 {question}
 """
         )
@@ -317,16 +329,22 @@ Latest question:
     @traceable(run_type="chain", name="classify_question")
     async def classify_question(self, user_question: str) -> str:
         system_prompt = (
-            "Classify the user input. Output only A or B.\n"
-            "A: knowledge-base question that needs retrieval.\n"
-            "B: casual conversation or unrelated small talk."
+            "请判断用户输入类型，只能输出 A 或 B，不要输出其他内容。\n"
+            "A：需要检索知识库才能回答的问题。\n"
+            "B：闲聊、问候、感谢、自我介绍，或与知识库无关的小范围对话。"
         )
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_question},
         ]
         response = await flash_llm.ainvoke(messages)
-        return response.content.strip()
+        label = response.content.strip().upper()
+        if label.startswith("A"):
+            return "A"
+        if label.startswith("B"):
+            return "B"
+        logger.warning("Unexpected question classification result: %s", response.content)
+        return "A"
 
     @traceable(run_type="chain", name="ingest_knowledge")
     def ingest_knowledge(
@@ -396,8 +414,9 @@ Latest question:
             {
                 "role": "system",
                 "content": (
-                    "You are a helpful enterprise assistant. "
-                    "For casual chat, be brief, friendly, and guide the user back to knowledge-base questions when appropriate."
+                    "你是一个友好、专业的企业知识助手。"
+                    "默认使用简体中文回答用户，除非用户明确要求使用其他语言。"
+                    "闲聊场景下回答要简短、自然，并在合适时引导用户提问与企业知识库相关的问题。"
                 ),
             }
         ]
@@ -418,6 +437,7 @@ Latest question:
         logger.info("Processing question for tenant %s: %s", tenant_id, question)
 
         if self._is_prompt_injection(question):
+            yield "__STAGE__:GENERATING\n"
             yield PROMPT_BLOCK_MESSAGE
             return
 
@@ -441,17 +461,20 @@ Latest question:
         if "A" in route:
             tenant_retriever = self._get_tenant_retriever(tenant_id)
             if not tenant_retriever:
+                yield "__STAGE__:GENERATING\n"
                 yield MISSING_KNOWLEDGE_MESSAGE
                 return
 
             retrieved_docs = await tenant_retriever.ainvoke(clean_query)
             if not retrieved_docs:
+                yield "__STAGE__:GENERATING\n"
                 yield NO_MATCH_MESSAGE
                 return
 
             yield "__STAGE__:RERANKING\n"
             context_str = "\n\n".join(doc.page_content for doc in retrieved_docs)
             if not await self.evaluate_context(question, context_str):
+                yield "__STAGE__:GENERATING\n"
                 yield NO_MATCH_MESSAGE
                 return
 
@@ -461,6 +484,7 @@ Latest question:
 请结合提供的对话历史与参考资料，以自然、专业、通顺的语气回答用户的问题。
 
 【回答要求】：
+0. 默认必须使用简体中文回答；除非用户明确要求使用其他语言，否则不要输出英文回答。
 1. 必须且只能基于提供的参考资料进行回答。回答结构应当【先进行简明扼要的总结，然后再分点展开详细说明】。
 2. 表达必须自然、通顺、专业，像资深专家一样对信息进行提炼与归纳，绝对不允许机械地直接复制或照搬参考资料原文。
 3. 结构清晰，合理使用标准的 Markdown 格式（如标题、加粗重点、无序或有序列表等）以提高可读性。

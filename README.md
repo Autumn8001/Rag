@@ -4,11 +4,11 @@
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.11%2B-blue?logo=python&logoColor=white" alt="Python 3.11+"></a>
   <a href="https://fastapi.tiangolo.com/"><img src="https://img.shields.io/badge/FastAPI-0.100%2B-009688?logo=fastapi&logoColor=white" alt="FastAPI"></a>
   <a href="https://github.com/langchain-ai/langchain"><img src="https://img.shields.io/badge/LangChain-RAG-orange" alt="LangChain"></a>
-  <a href="https://streamlit.io/"><img src="https://img.shields.io/badge/Streamlit-UI-FF4B4B?logo=streamlit&logoColor=white" alt="Streamlit"></a>
+  <a href="https://react.dev/"><img src="https://img.shields.io/badge/React-UI-61DAFB?logo=react&logoColor=white" alt="React"></a>
   <a href="https://www.postgresql.org/"><img src="https://img.shields.io/badge/PostgreSQL-15%2B-4169E1?logo=postgresql&logoColor=white" alt="PostgreSQL"></a>
 </p>
 
-基于 **FastAPI + React/Streamlit + ChromaDB + Flashrank Rerank + PostgreSQL** 构建的准生产级、企业多租户 RAG（检索增强生成）问答系统。项目通过 JWT 鉴权结合向量/关键词物理隔离、Critic Agent 防幻觉拒答、RAGAS 评测闭环及 LangSmith 监控，构建了一个**“可观测、可评测、可部署、可验证”**的完整工程闭环。
+基于 **FastAPI + React + ChromaDB + Flashrank Rerank + PostgreSQL** 构建的准生产级、企业多租户 RAG（检索增强生成）问答系统。项目通过 JWT 鉴权结合向量/关键词物理隔离、Critic Agent 防幻觉拒答、RAGAS 评测闭环及 LangSmith 监控，构建了一个**“可观测、可评测、可部署、可验证”**的完整工程闭环。
 
 ---
 
@@ -21,7 +21,21 @@
 | **技术亮点 3** | **无状态 JWT SSO 鉴权与后端历史加载**：屏蔽前端传入的历史聊天记录，强制在后端通过 PostgreSQL 强绑定 `tenant_id + user_id` 进行历史加载，防御会话伪造攻击，并提供访客租户物理数据定期自动清理机制。 | [查看安全防线](#第三页-系统架构与多租户隔离数据流-architecture--data-flow) |
 | **量化指标 1** | **评测准确率提升 13.4%**：通过放宽 Critic 推理边界和 Rerank Top-5 调优，人工评测集准确率由 **73.3% 提升至 86.7%**。 | [查看人工评测报告](docs/evaluation_report.md) |
 | **量化指标 2** | **回答忠实度提升 24.7%**：RAGAS 自动化评测结果显示，优化后生成回答的 **Faithfulness (忠实度) 指标达 0.6767**，Context Recall 达 0.9333。 | [查看RAGAS自动化报告](docs/ragas_report.md) |
-| **架构与截图**| 完整还原了 [系统主界面截图](docs/screenshot.png) 与自动化打分生成的 [评测结果截图](test_result.webp) 视觉印证。 | [查看系统架构图](#第三页-系统架构与多租户隔离数据流-architecture--data-flow) |
+| **架构与截图**| 完整还原了新版 React 前端的 [登陆系统](docs/登陆系统.png)、[用户模式](docs/用户模式.png)、[开发者模式](docs/开发者模式.png) 以及自动化打分生成的 [评测结果截图](test_result.webp) 视觉印证。 | [查看系统架构图](#第三页-系统架构与多租户隔离数据流-architecture--data-flow) |
+
+### 🖥️ 新版 React 前端运行截图展示
+
+<table>
+  <tr>
+    <td align="center"><b>多租户登陆系统</b><br/><img src="docs/登陆系统.png" width="100%"/></td>
+  </tr>
+  <tr>
+    <td align="center"><b>用户问答模式</b><br/><img src="docs/用户模式.png" width="100%"/></td>
+  </tr>
+  <tr>
+    <td align="center"><b>开发者调试模式 (RAG Trace & 检索中间件)</b><br/><img src="docs/开发者模式.png" width="100%"/></td>
+  </tr>
+</table>
 
 ---
 
@@ -83,7 +97,7 @@
 ```mermaid
 graph TD
     subgraph Client [客户端/UI层]
-        UI[React/Streamlit 前端]
+        UI[React 前端]
     end
 
     subgraph API [FastAPI 接口与鉴权层]
@@ -206,12 +220,14 @@ services:
     image: postgres:15-alpine  # 数据持久化，绑定端口 5435
   backend:
     build: .                   # 后端 FastAPI 镜像，依赖 db
-    ports: ["8010:8010"]
+    ports: ["8010:8000"]
   frontend:
-    build:                     # 前端 Streamlit 镜像，依赖 backend
-      context: ./frontend
+    build:                     # 前端 React/Vite 镜像，依赖 backend
+      context: .
       dockerfile: Dockerfile.frontend
-    ports: ["5178:5178"]
+      args:
+        - VITE_API_BASE_URL=http://<YOUR_SERVER_IP>:8010/api/v1
+    ports: ["5178:80"]
 ```
 - *启动命令*：
   ```bash
