@@ -269,6 +269,10 @@ function App() {
 
   const isVisitorSession = () => {
     const rawUsername = username || sessionStorage.getItem('username') || '';
+    // 防御性卡控：如果不是临时访客，且用户名不以 visitor_ 开头，绝不判定为访客会话，即使本地残存时间戳
+    if (isTemporaryVisitor === false && !rawUsername.startsWith('visitor_')) {
+      return false;
+    }
     return Boolean(
       isTemporaryVisitor ||
       rawUsername.startsWith('visitor_') ||
