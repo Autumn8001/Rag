@@ -447,6 +447,34 @@ class RAGEngine:
         tenant_id: str = "default_tenant",
         search_mode: str = "RAG_ONLY",
     ):
+        # 1. 🛡️ 安全防御：检测提示词注入
+        if self._is_prompt_injection(question):
+            yield PROMPT_BLOCK_MESSAGE
+            return
+
+        # 2. 🤖 闲聊分流：如果命中硬编码的简短闲聊，直接返回 Persona 回复
+        if self._is_small_talk(question):
+            yield "__STAGE__:UNDERSTANDING\n"
+            yield "__STAGE__:GENERATING\n"
+            async for chunk in self._stream_persona_response(question, history):
+                yield chunk
+            return
+
+        # 3. 🧠 意图分类：调用 LLM 做智能分类
+        yield "__STAGE__:UNDERSTANDING\n"
+        route = await self.classify_question(question)
+        if route == "B":  # 闲聊/非知识库查询，直接直通兜底进入 Persona 闲聊回复
+            yield "__STAGE__:GENERATING\n"
+            async for chunk in self._stream_persona_response(question, history):
+                yield chunk
+            return
+
+        # 4. 📝 问题改写 (Query Rewrite)：多轮对话重写以提取出独立的问题
+        clean_query = await self.rewrite_query(question, history) if history else question
+        history_text = ""
+        if history:
+            history_text = "\n".join(f"{msg['role']}: {msg['content']}" for msg in history)
+
         # === 方案 B：混合检索（Hybrid Retrieval）—— 两路数据并流 ===
         # 第一路：去数据库捞取当前租户下编译好的 Wiki 专有名词、核心条款与 FAQ 读书笔记卡片
         from core.database import SessionLocal
@@ -461,11 +489,18 @@ class RAGEngine:
                 all_items = db.query(WikiItem).filter(WikiItem.wiki_page_id.in_(page_ids)).all()
                 for item in all_items:
                     score = 0
+                    # 1. 概念词完全在提问中包含（或包含提问）—— 直接命中
                     if item.key.lower() in clean_query.lower() or clean_query.lower() in item.key.lower():
-                        score += 15
-                    common_chars = set(item.key.lower()) & set(clean_query.lower())
-                    score += len(common_chars)
-                    if score > 0:
+                        score += 30
+                    else:
+                        # 2. 核心词（长度 >= 2）在提问中出现
+                        if len(item.key) >= 2 and item.key.lower() in clean_query.lower():
+                            score += 20
+                    # 3. 常见共有字符计数（只计算有效非空白字符，过滤掉高频停用词）
+                    common_chars = set(c for c in item.key.lower() if len(c.strip()) > 0 and c not in "的是了我在你他它们吗呢吧") & set(clean_query.lower())
+                    score += len(common_chars) * 2
+                    
+                    if score > 5:
                         matched_wiki_items.append((item, score))
                 
                 matched_wiki_items.sort(key=lambda x: x[1], reverse=True)
@@ -478,14 +513,12 @@ class RAGEngine:
         # 第二路：去 Chroma 和 BM25 检索原始物理切片，捞取原文细节 (doc_type="document")
         retrieved_docs = []
         yield "__STAGE__:RETRIEVING\n"
-        route = await self.classify_question(question)
-        if "A" in route:
-            tenant_retriever = self._get_tenant_retriever(tenant_id, doc_type="document")
-            if tenant_retriever:
-                try:
-                    retrieved_docs = await tenant_retriever.ainvoke(clean_query)
-                except Exception as e:
-                    logger.exception("Error retrieving document chunks: %s", e)
+        tenant_retriever = self._get_tenant_retriever(tenant_id, doc_type="document")
+        if tenant_retriever:
+            try:
+                retrieved_docs = await tenant_retriever.ainvoke(clean_query)
+            except Exception as e:
+                logger.exception("Error retrieving document chunks: %s", e)
 
         # 两路都无召回内容，则直接告知无匹配
         if not retrieved_docs and not matched_wiki_items:

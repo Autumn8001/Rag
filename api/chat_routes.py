@@ -43,7 +43,7 @@ class ChatRequest(BaseModel):
     history: list[dict[str, str]] | None = Field(
         default=None, description="前端可选传入的历史消息"
     )
-    search_mode: str = Field(default="RAG_ONLY", description="检索模式 RAG_ONLY / WIKI_ONLY")
+    search_mode: str | None = Field(default=None, description="已废弃：前检索模式选项，系统已全面重构为双路并流混合检索，此参数可不传")
 
 
 @router.get("/health", summary="Service health check")
@@ -121,7 +121,7 @@ async def chat_endpoint(
     async def stream_generator():
         full_response = ""
         try:
-            async for chunk in stream_rag_answer(user_question, history, tenant_id=tenant_id, search_mode=request.search_mode):
+            async for chunk in stream_rag_answer(user_question, history, tenant_id=tenant_id, search_mode=request.search_mode or "RAG_ONLY"):
                 full_response += chunk
                 yield chunk
         except Exception as e:

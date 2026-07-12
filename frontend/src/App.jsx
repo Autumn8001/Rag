@@ -169,6 +169,7 @@ function App() {
   const [currentCitations, setCurrentCitations] = useState([]); 
   const [currentStep, setCurrentStep] = useState(-1);
   const [isCitationsExpanded, setIsCitationsExpanded] = useState(false);
+  const [expandedCitations, setExpandedCitations] = useState({});
 
   // 专属知识库分页列表
   const [documents, setDocuments] = useState([]);
@@ -674,6 +675,7 @@ function App() {
     setMessages([]);
     setCurrentCitations([]);
     setIsCitationsExpanded(false);
+    setExpandedCitations({});
     try {
       const res = await fetch(`${API_BASE}/history/${sessionId}`, {
         headers: { 'Authorization': `Bearer ${token}` }
@@ -712,6 +714,7 @@ function App() {
     setMessages([]);
     setIsCitationsExpanded(false);
     setCurrentCitations([]);
+    setExpandedCitations({});
     fetchSessions();
   };
 
@@ -985,21 +988,35 @@ function App() {
           }
         }
 
-        setMessages(prev => {
-          const next = [...prev];
-          next[next.length - 1] = { role: 'assistant', content: displayCtx };
-          return next;
-        });
-
+        let chunks = [];
+        let wikiItems = [];
         if (metaJsonStr && markerIdx !== -1) {
           try {
             const parsed = JSON.parse(metaJsonStr);
-            if (parsed && parsed.chunks) {
-              setCurrentCitations(parsed.chunks);
+            if (parsed) {
+              chunks = parsed.chunks || [];
+              wikiItems = parsed.wiki_items || [];
             }
           } catch(e) {
             // ignore
           }
+        }
+
+        setMessages(prev => {
+          const next = [...prev];
+          const lastMsg = next[next.length - 1];
+          next[next.length - 1] = { 
+            ...lastMsg,
+            role: 'assistant', 
+            content: displayCtx,
+            citations: chunks,
+            wikiItems: wikiItems
+          };
+          return next;
+        });
+
+        if (chunks.length > 0) {
+          setCurrentCitations(chunks);
         }
       }
       
@@ -1015,8 +1032,18 @@ function App() {
         }
         try {
           const parsed = JSON.parse(finalMetaStr);
-          if (parsed && parsed.chunks) {
-            setCurrentCitations(parsed.chunks);
+          if (parsed) {
+            setMessages(prev => {
+              const next = [...prev];
+              const lastMsg = next[next.length - 1];
+              next[next.length - 1] = {
+                ...lastMsg,
+                citations: parsed.chunks || [],
+                wikiItems: parsed.wiki_items || []
+              };
+              return next;
+            });
+            setCurrentCitations(parsed.chunks || []);
           }
         } catch(e) {
           console.error(e);
@@ -2062,85 +2089,202 @@ function App() {
                           </span>
                         </div>
 
-                        {/* 最后一个 AI 回复下方，如果存在引用来源，渲染垂直卡片列表 */}
-                        {!isUser && index === messages.length - 1 && currentCitations.length > 0 && (
-                          <div className="citations-block-wrapper">
-                            <div 
-                              className="citations-toggle-header" 
-                              onClick={() => setIsCitationsExpanded(!isCitationsExpanded)}
-                              style={{ 
-                                cursor: 'pointer', 
-                                display: 'inline-flex', 
-                                alignItems: 'center', 
-                                gap: '6px',
-                                padding: '4px 0',
-                                userSelect: 'none'
-                              }}
-                            >
-                              <span className="citations-block-title" style={{ fontSize: '13px', fontWeight: '600', color: '#4F46E5' }}>
-                                引用来源 ({currentCitations.length})
-                              </span>
-                              <ChevronRight 
-                                size={14} 
-                                style={{ 
-                                  transform: isCitationsExpanded ? 'rotate(90deg)' : 'rotate(0deg)', 
-                                  transition: 'transform 0.2s ease',
-                                  color: '#4F46E5'
-                                }} 
-                              />
-                            </div>
-                            
-                            {isCitationsExpanded && (
-                              <div className="citations-list-compact" style={{ 
-                                maxHeight: '120px', 
-                                overflowY: 'auto', 
-                                marginTop: '8px', 
-                                display: 'flex', 
-                                flexDirection: 'column', 
-                                gap: '6px',
-                                paddingRight: '4px'
-                              }}>
-                                {currentCitations.map((c, cIdx) => (
-                                  <div 
-                                    key={cIdx} 
-                                    className="citation-compact-item"
-                                    onClick={() => openChunkPreview(getCitationFilename(c))}
-                                    style={{ 
-                                      display: 'flex', 
-                                      alignItems: 'center', 
-                                      justifyContent: 'space-between',
-                                      padding: '6px 10px',
-                                      background: '#F9FAFB',
-                                      border: '1px solid #F3F4F6',
-                                      borderRadius: '6px',
-                                      cursor: 'pointer',
-                                      transition: 'background 0.2s ease'
-                                    }}
-                                    onMouseEnter={(e) => e.currentTarget.style.background = '#EEF2FF'}
-                                    onMouseLeave={(e) => e.currentTarget.style.background = '#F9FAFB'}
-                                  >
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
-                                      <span style={{ fontSize: '11px', fontWeight: '600', color: '#4F46E5', background: '#EEF2FF', padding: '1px 5px', borderRadius: '4px', flexShrink: 0 }}>
-                                        [{cIdx + 1}]
+                        {/* 1. Wiki 提炼读书笔记卡片平铺展示 */}
+                        {!isUser && msg.wikiItems && msg.wikiItems.length > 0 && (
+                          <div className="wiki-cards-grid-container" style={{ 
+                            display: 'grid', 
+                            gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', 
+                            gap: '12px', 
+                            marginTop: '12px',
+                            marginBottom: '12px',
+                            width: '100%'
+                          }}>
+                            {msg.wikiItems.map((item, wIdx) => {
+                              const isConcept = item.category === 'concept';
+                              const isClause = item.category === 'clause';
+                              const isFaq = item.category === 'faq';
+                              
+                              let theme = {
+                                bg: '#F9FAFB',
+                                border: '#F3F4F6',
+                                text: '#374151',
+                                accent: '#6B7280',
+                                label: '读书笔记',
+                                IconComponent: FileText
+                              };
+                              
+                              if (isConcept) {
+                                theme = {
+                                  bg: '#F0F9FF',
+                                  border: '#E0F2FE',
+                                  text: '#0369A1',
+                                  accent: '#0284C7',
+                                  label: '名词解释',
+                                  IconComponent: Hexagon
+                                };
+                              } else if (isClause) {
+                                theme = {
+                                  bg: '#F0FDF4',
+                                  border: '#DCFCE7',
+                                  text: '#15803D',
+                                  accent: '#16A34A',
+                                  label: '合规条款',
+                                  IconComponent: FileText
+                                };
+                              } else if (isFaq) {
+                                theme = {
+                                  bg: '#FFFBEB',
+                                  border: '#FEF3C7',
+                                  text: '#B45309',
+                                  accent: '#D97706',
+                                  label: '典型问答',
+                                  IconComponent: Lightbulb
+                                };
+                              }
+                              
+                              const Icon = theme.IconComponent;
+                              
+                              return (
+                                <div 
+                                  key={wIdx}
+                                  className="wiki-item-vector-card"
+                                  style={{
+                                    background: theme.bg,
+                                    border: `1px solid ${theme.border}`,
+                                    borderRadius: '10px',
+                                    padding: '12px 14px',
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: '6px',
+                                    boxShadow: '0 1px 2px rgba(0,0,0,0.02)',
+                                    transition: 'all 0.2s ease-in-out',
+                                  }}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                      <Icon size={14} style={{ color: theme.accent }} />
+                                      <span style={{ fontSize: '11px', fontWeight: '700', color: theme.text }}>
+                                        {theme.label}
                                       </span>
-                                      <span style={{ fontSize: '12px', color: '#374151', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
-                                        {getCitationFilename(c)}
-                                      </span>
-                                      {c.page && (
-                                        <span style={{ fontSize: '11px', color: '#6B7280', flexShrink: 0 }}>
-                                          (第 {c.page} 页)
-                                        </span>
-                                      )}
                                     </div>
-                                    <span style={{ fontSize: '11px', color: '#4F46E5', fontWeight: '500', flexShrink: 0 }}>
-                                      点击预览 ➔
-                                    </span>
                                   </div>
-                                ))}
-                              </div>
-                            )}
+                                  <div style={{ fontSize: '13.5px', fontWeight: '600', color: '#111827', marginTop: '2px' }}>
+                                    {item.key}
+                                  </div>
+                                  <div style={{ fontSize: '12.5px', color: '#4B5563', lineHeight: '1.5', whiteSpace: 'pre-wrap' }}>
+                                    {item.value}
+                                  </div>
+                                  {item.citation && (
+                                    <div style={{ 
+                                      marginTop: '4px', 
+                                      paddingTop: '6px', 
+                                      borderTop: `1px dashed ${theme.border}`,
+                                      fontSize: '11px', 
+                                      color: '#6B7280', 
+                                      display: 'flex', 
+                                      gap: '4px',
+                                      alignItems: 'flex-start'
+                                    }}>
+                                      <Quote size={10} style={{ transform: 'rotate(180deg)', flexShrink: 0, marginTop: '2px' }} />
+                                      <span style={{ fontStyle: 'italic' }}>依据：{item.citation}</span>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
                           </div>
                         )}
+
+                        {/* 2. 原文物理切片引用列表折叠 */}
+                        {(() => {
+                          const citations = msg.citations || (index === messages.length - 1 ? currentCitations : []);
+                          if (!isUser && citations.length > 0) {
+                            return (
+                              <div className="citations-block-wrapper" style={{ marginTop: '8px' }}>
+                                <div 
+                                  className="citations-toggle-header" 
+                                  onClick={() => {
+                                    setExpandedCitations(prev => ({
+                                      ...prev,
+                                      [index]: !prev[index]
+                                    }));
+                                  }}
+                                  style={{ 
+                                    cursor: 'pointer', 
+                                    display: 'inline-flex', 
+                                    alignItems: 'center', 
+                                    gap: '6px',
+                                    padding: '4px 0',
+                                    userSelect: 'none'
+                                  }}
+                                >
+                                  <span className="citations-block-title" style={{ fontSize: '13px', fontWeight: '600', color: '#4F46E5' }}>
+                                    引用来源 ({citations.length})
+                                  </span>
+                                  <ChevronRight 
+                                    size={14} 
+                                    style={{ 
+                                      transform: expandedCitations[index] ? 'rotate(90deg)' : 'rotate(0deg)', 
+                                      transition: 'transform 0.2s ease',
+                                      color: '#4F46E5'
+                                    }} 
+                                  />
+                                </div>
+                                
+                                {expandedCitations[index] && (
+                                  <div className="citations-list-compact" style={{ 
+                                    maxHeight: '120px', 
+                                    overflowY: 'auto', 
+                                    marginTop: '8px', 
+                                    display: 'flex', 
+                                    flexDirection: 'column', 
+                                    gap: '6px',
+                                    paddingRight: '4px'
+                                  }}>
+                                    {citations.map((c, cIdx) => (
+                                      <div 
+                                        key={cIdx} 
+                                        className="citation-compact-item"
+                                        onClick={() => openChunkPreview(getCitationFilename(c))}
+                                        style={{ 
+                                          display: 'flex', 
+                                          alignItems: 'center', 
+                                          justifyContent: 'space-between',
+                                          padding: '6px 10px',
+                                          background: '#F9FAFB',
+                                          border: '1px solid #F3F4F6',
+                                          borderRadius: '6px',
+                                          cursor: 'pointer',
+                                          transition: 'background 0.2s ease'
+                                        }}
+                                        onMouseEnter={(e) => e.currentTarget.style.background = '#EEF2FF'}
+                                        onMouseLeave={(e) => e.currentTarget.style.background = '#F9FAFB'}
+                                      >
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
+                                          <span style={{ fontSize: '11px', fontWeight: '600', color: '#4F46E5', background: '#EEF2FF', padding: '1px 5px', borderRadius: '4px', flexShrink: 0 }}>
+                                            [{cIdx + 1}]
+                                          </span>
+                                          <span style={{ fontSize: '12px', color: '#374151', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                                            {getCitationFilename(c)}
+                                          </span>
+                                          {c.page && (
+                                            <span style={{ fontSize: '11px', color: '#6B7280', flexShrink: 0 }}>
+                                              (第 {c.page} 页)
+                                            </span>
+                                          )}
+                                        </div>
+                                        <span style={{ fontSize: '11px', color: '#4F46E5', fontWeight: '500', flexShrink: 0 }}>
+                                          点击预览 ➔
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          }
+                          return null;
+                        })()}
                       </div>
                     );
                   })}
