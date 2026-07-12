@@ -22,7 +22,8 @@ RUN uv sync --frozen --no-dev
 # ============================================================
 FROM python:3.13-slim
 
-# 安装运行时音频与文档处理所需的系统依赖（ffmpeg 供音频和音轨解析转换）
+# 换为国内USTC镜像源以大幅加速apt系统包下载
+RUN sed -i 's/deb.debian.org/mirrors.ustc.edu.cn/g' /etc/apt/sources.list.d/debian.sources || true
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
