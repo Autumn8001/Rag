@@ -65,6 +65,52 @@ function App() {
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
   const [activeRightTab, setActiveRightTab] = useState('kb'); // 'citations' | 'kb'
 
+  // --- Wiki 工作台与检索路由状态 ---
+  const [activeTab, setActiveTab] = useState('chat'); // 'chat' | 'wiki'
+  const [searchMode, setSearchMode] = useState('RAG_ONLY'); // 'RAG_ONLY' | 'WIKI_ONLY'
+  const [wikiDocs, setWikiDocs] = useState([]); // 已编译的 Wiki 文档列表
+  const [selectedWikiDocId, setSelectedWikiDocId] = useState(null); // 当前选中的 Wiki 文档 ID
+  const [selectedWiki, setSelectedWiki] = useState(null); // 当前选中的 Wiki 编译结构化详情对象
+  const [isLoadingWiki, setIsLoadingWiki] = useState(false); // 加载 Wiki 状态
+
+  // 获取已编译的 Wiki 列表
+  const fetchWikis = async () => {
+    if (!token) return;
+    try {
+      const res = await fetch(`${API_BASE}/wiki/list`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setWikiDocs(data.wikis || []);
+      }
+    } catch (err) {
+      console.error('获取Wiki列表失败', err);
+    }
+  };
+
+  // 获取单个 Wiki 详情
+  const fetchWikiDetail = async (documentId) => {
+    if (!documentId) return;
+    setIsLoadingWiki(true);
+    try {
+      const res = await fetch(`${API_BASE}/wiki/detail?document_id=${documentId}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setSelectedWiki(data.wiki || null);
+      } else {
+        showToast('获取Wiki详情失败', data.detail || '无法获取Wiki内容', 'error');
+      }
+    } catch (err) {
+      console.error('获取Wiki详情失败', err);
+      showToast('获取Wiki详情失败', '网络请求错误', 'error');
+    } finally {
+      setIsLoadingWiki(false);
+    }
+  };
+
   // 左侧边栏拖拽拉伸
   const handleLeftResizeMouseDown = (e) => {
     e.preventDefault();
@@ -365,7 +411,7 @@ function App() {
         sessionStorage.setItem('username', data.username);
         sessionStorage.setItem('tenant_id', data.tenant_id);
         updateVisitorLifecycleCache(data);
-        showToast('访客免密登录成功', '已为您随机生成物理隔离租户沙箱，数据仅保留在当前会话中。', 'success');
+        showToast('访客免密登录成功', '已为您随机生成独立租户空间，数据将在会话过期后自动清理。', 'success');
       } else {
         setAuthError(data.detail || '访客免密通道登录失败');
         showToast('登录失败', data.detail || '访客通道暂时关闭', 'error');
@@ -467,6 +513,7 @@ function App() {
     if (token) {
       fetchDocuments(kbPage);
       fetchSessions();
+      fetchWikis();
       checkHealthStatus();
       syncCurrentUserSession(token);
     }
@@ -747,6 +794,7 @@ function App() {
         }
         setUploadProgress('');
         fetchDocuments(kbPage);
+        fetchWikis();
       } else {
         showToast('上传失败', data.detail || '文件导入失败', 'error');
         setUploadProgress('');
@@ -855,7 +903,8 @@ function App() {
         signal: abortController.signal,
         body: JSON.stringify({ 
           question: userText, 
-          session_id: tempSessionId
+          session_id: tempSessionId,
+          search_mode: searchMode
         })
       });
 
@@ -1397,114 +1446,208 @@ function App() {
           <div className="sidebar-subtitle">AI Knowledge Workspace</div>
         </div>
 
-        {/* 新建对话按钮 */}
-        <div className="new-chat-wrapper">
-          <button className="new-chat-btn-lg" onClick={handleCreateNewChat}>
-            <Plus size={15} strokeWidth={1.5} /> 新建对话
+        {/* 工作台功能模式切换 Tabs */}
+        <div className="sidebar-mode-tabs" style={{ display: 'flex', gap: '4px', padding: '12px 16px 8px', borderBottom: '1px solid var(--border-color, #E5E7EB)' }}>
+          <button 
+            type="button"
+            onClick={() => setActiveTab('chat')}
+            style={{
+              flex: 1,
+              padding: '6px 12px',
+              fontSize: '12px',
+              fontWeight: '600',
+              borderRadius: '6px',
+              border: 'none',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+              background: activeTab === 'chat' ? '#EEF2FF' : 'transparent',
+              color: activeTab === 'chat' ? '#4F46E5' : '#4B5563',
+              transition: 'all 0.2s'
+            }}
+          >
+            <MessageSquare size={13} />
+            智能问答
+          </button>
+          <button 
+            type="button"
+            onClick={() => setActiveTab('wiki')}
+            style={{
+              flex: 1,
+              padding: '6px 12px',
+              fontSize: '12px',
+              fontWeight: '600',
+              borderRadius: '6px',
+              border: 'none',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+              background: activeTab === 'wiki' ? '#EEF2FF' : 'transparent',
+              color: activeTab === 'wiki' ? '#4F46E5' : '#4B5563',
+              transition: 'all 0.2s'
+            }}
+          >
+            <FileText size={13} />
+            知识 Wiki
           </button>
         </div>
 
-        {/* 搜索会话框 */}
-        <div className="sidebar-search-box">
-          <div className="search-box-inner">
-            <input 
-              type="text" 
-              placeholder="搜索历史会话"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-            <Search size={13} strokeWidth={1.5} className="search-icon" />
-          </div>
-        </div>
-
-        {/* 分组会话列表 */}
-        <div className="session-grouped-container">
-          {sessions.length === 0 ? (
-            <div style={{ fontSize: '12px', color: 'var(--text-secondary)', textAlign: 'center', marginTop: '16px' }}>
-              暂无历史会话
+        {activeTab === 'chat' ? (
+          <>
+            {/* 新建对话按钮 */}
+            <div className="new-chat-wrapper">
+              <button className="new-chat-btn-lg" onClick={handleCreateNewChat}>
+                <Plus size={15} strokeWidth={1.5} /> 新建对话
+              </button>
             </div>
-          ) : (
-            <>
-              {/* 今天 */}
-              {groupedSessions.today.length > 0 && (
-                <div className="session-group">
-                  <div className="session-group-title">今天</div>
-                  {groupedSessions.today.map(s => (
-                    <div 
-                      key={s.session_id} 
-                      className={`session-item-row ${activeSessionId === s.session_id ? 'active' : ''}`}
-                      onClick={() => handleSelectSession(s.session_id)}
-                    >
-                      <div className="session-item-left">
-                        <MessageSquare size={13} strokeWidth={1.5} color={activeSessionId === s.session_id ? 'var(--accent-color)' : 'var(--text-secondary)'} />
-                        <span className="session-item-title-text" title={s.title}>{s.title}</span>
-                      </div>
-                      <button 
-                        className="session-delete-action" 
-                        onClick={(e) => handleDeleteSession(e, s.session_id)}
-                        title="删除会话"
-                      >
-                        <Trash2 size={12} strokeWidth={1.5} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
 
-              {/* 昨天 */}
-              {groupedSessions.yesterday.length > 0 && (
-                <div className="session-group">
-                  <div className="session-group-title">昨天</div>
-                  {groupedSessions.yesterday.map(s => (
-                    <div 
-                      key={s.session_id} 
-                      className={`session-item-row ${activeSessionId === s.session_id ? 'active' : ''}`}
-                      onClick={() => handleSelectSession(s.session_id)}
-                    >
-                      <div className="session-item-left">
-                        <MessageSquare size={13} strokeWidth={1.5} color={activeSessionId === s.session_id ? 'var(--accent-color)' : 'var(--text-secondary)'} />
-                        <span className="session-item-title-text" title={s.title}>{s.title}</span>
-                      </div>
-                      <button 
-                        className="session-delete-action" 
-                        onClick={(e) => handleDeleteSession(e, s.session_id)}
-                        title="删除会话"
-                      >
-                        <Trash2 size={12} strokeWidth={1.5} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
+            {/* 搜索会话框 */}
+            <div className="sidebar-search-box">
+              <div className="search-box-inner">
+                <input 
+                  type="text" 
+                  placeholder="搜索历史会话"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+                <Search size={13} strokeWidth={1.5} className="search-icon" />
+              </div>
+            </div>
 
-              {/* 更早 */}
-              {groupedSessions.older.length > 0 && (
-                <div className="session-group">
-                  <div className="session-group-title">更早</div>
-                  {groupedSessions.older.map(s => (
-                    <div 
-                      key={s.session_id} 
-                      className={`session-item-row ${activeSessionId === s.session_id ? 'active' : ''}`}
-                      onClick={() => handleSelectSession(s.session_id)}
-                    >
-                      <div className="session-item-left">
-                        <MessageSquare size={13} strokeWidth={1.5} color={activeSessionId === s.session_id ? 'var(--accent-color)' : 'var(--text-secondary)'} />
-                        <span className="session-item-title-text" title={s.title}>{s.title}</span>
-                      </div>
-                      <button 
-                        className="session-delete-action" 
-                        onClick={(e) => handleDeleteSession(e, s.session_id)}
-                        title="删除会话"
-                      >
-                        <Trash2 size={12} strokeWidth={1.5} />
-                      </button>
-                    </div>
-                  ))}
+            {/* 分组会话列表 */}
+            <div className="session-grouped-container">
+              {sessions.length === 0 ? (
+                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', textAlign: 'center', marginTop: '16px' }}>
+                  暂无历史会话
                 </div>
+              ) : (
+                <>
+                  {/* 今天 */}
+                  {groupedSessions.today.length > 0 && (
+                    <div className="session-group">
+                      <div className="session-group-title">今天</div>
+                      {groupedSessions.today.map(s => (
+                        <div 
+                          key={s.session_id} 
+                          className={`session-item-row ${activeSessionId === s.session_id ? 'active' : ''}`}
+                          onClick={() => handleSelectSession(s.session_id)}
+                        >
+                          <div className="session-item-left">
+                            <MessageSquare size={13} strokeWidth={1.5} color={activeSessionId === s.session_id ? 'var(--accent-color)' : 'var(--text-secondary)'} />
+                            <span className="session-item-title-text" title={s.title}>{s.title}</span>
+                          </div>
+                          <button 
+                            className="session-delete-action" 
+                            onClick={(e) => handleDeleteSession(e, s.session_id)}
+                            title="删除会话"
+                          >
+                            <Trash2 size={12} strokeWidth={1.5} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* 昨天 */}
+                  {groupedSessions.yesterday.length > 0 && (
+                    <div className="session-group">
+                      <div className="session-group-title">昨天</div>
+                      {groupedSessions.yesterday.map(s => (
+                        <div 
+                          key={s.session_id} 
+                          className={`session-item-row ${activeSessionId === s.session_id ? 'active' : ''}`}
+                          onClick={() => handleSelectSession(s.session_id)}
+                        >
+                          <div className="session-item-left">
+                            <MessageSquare size={13} strokeWidth={1.5} color={activeSessionId === s.session_id ? 'var(--accent-color)' : 'var(--text-secondary)'} />
+                            <span className="session-item-title-text" title={s.title}>{s.title}</span>
+                          </div>
+                          <button 
+                            className="session-delete-action" 
+                            onClick={(e) => handleDeleteSession(e, s.session_id)}
+                            title="删除会话"
+                          >
+                            <Trash2 size={12} strokeWidth={1.5} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* 更早 */}
+                  {groupedSessions.older.length > 0 && (
+                    <div className="session-group">
+                      <div className="session-group-title">更早</div>
+                      {groupedSessions.older.map(s => (
+                        <div 
+                          key={s.session_id} 
+                          className={`session-item-row ${activeSessionId === s.session_id ? 'active' : ''}`}
+                          onClick={() => handleSelectSession(s.session_id)}
+                        >
+                          <div className="session-item-left">
+                            <MessageSquare size={13} strokeWidth={1.5} color={activeSessionId === s.session_id ? 'var(--accent-color)' : 'var(--text-secondary)'} />
+                            <span className="session-item-title-text" title={s.title}>{s.title}</span>
+                          </div>
+                          <button 
+                            className="session-delete-action" 
+                            onClick={(e) => handleDeleteSession(e, s.session_id)}
+                            title="删除会话"
+                          >
+                            <Trash2 size={12} strokeWidth={1.5} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
               )}
-            </>
-          )}
-        </div>
+            </div>
+          </>
+        ) : (
+          /* 已编译文档 WIKI 列表 */
+          <div className="session-grouped-container">
+            <div style={{ fontSize: '11px', fontWeight: '600', color: '#9CA3AF', padding: '8px 16px 4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              已编译的文档 Wiki ({wikiDocs.length})
+            </div>
+            {wikiDocs.length === 0 ? (
+              <div style={{ fontSize: '12px', color: '#9CA3AF', textAlign: 'center', marginTop: '24px', padding: '0 16px', lineHeight: '1.5' }}>
+                暂无编译文档。在右侧上传 PDF/MD 文档，AI 会自动对其编译。
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', padding: '4px 8px' }}>
+                {wikiDocs.map(s => (
+                  <div 
+                    key={s.document_id} 
+                    className={`session-item-row ${selectedWikiDocId === s.document_id ? 'active' : ''}`}
+                    onClick={() => { setSelectedWikiDocId(s.document_id); fetchWikiDetail(s.document_id); }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '8px 12px',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      background: selectedWikiDocId === s.document_id ? '#EEF2FF' : 'transparent',
+                      color: selectedWikiDocId === s.document_id ? '#4F46E5' : '#374151',
+                      transition: 'all 0.2s'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden', width: '100%' }}>
+                      <FileText size={13} strokeWidth={1.5} style={{ flexShrink: 0, color: selectedWikiDocId === s.document_id ? '#4F46E5' : '#6B7280' }} />
+                      <span style={{ fontSize: '12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: selectedWikiDocId === s.document_id ? '600' : '400' }} title={s.title}>
+                        {s.title}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* 底部操作员卡片与弹出浮层菜单 */}
         <div className="sidebar-user-card-wrapper">
@@ -1550,13 +1693,154 @@ function App() {
       )}
 
       {/* 中间 Workspace 区域 (最大宽度 900px, 左右留白自适应) */}
-      {(() => {
-        const rawUsername = username || '访客';
-        const displayUsername = isVisitorSession() ? '访客' : rawUsername;
-        const recentSessionsLimit = sessions.slice(0, 3); // 最多 3 条最近会话
-        
-        return (
-          <div className="main-workspace">
+      {activeTab === 'wiki' ? (
+        /* Wiki 编译工作台渲染 */
+        <div className="main-workspace" style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, overflow: 'hidden' }}>
+          {!selectedWikiDocId ? (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-secondary)', padding: '24px' }}>
+              <FileText size={48} strokeWidth={1} style={{ marginBottom: '16px', color: 'var(--accent-color)' }} />
+              <h3 style={{ fontSize: '16px', fontWeight: '600', color: 'var(--text-main)' }}>请在左侧选择已编译文档以查看结构化 Wiki</h3>
+              <p style={{ fontSize: '13px', marginTop: '8px', textAlign: 'center', maxWidth: '400px', lineHeight: '1.6' }}>
+                大模型知识编译器会自动对上传的文档做智能摘要、核心概念、关键条款以及典型问答的提炼，并为您保留引用的出处与片段。
+              </p>
+            </div>
+          ) : isLoadingWiki ? (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-secondary)' }}>
+              <RefreshCw className="animate-spin" size={32} style={{ marginBottom: '16px', color: 'var(--accent-color)' }} />
+              <p style={{ fontSize: '13px' }}>智能知识编译器正在编译该文档的 Wiki 结构化视图...</p>
+            </div>
+          ) : selectedWiki ? (
+            <div className="wiki-detail-workspace" style={{ flex: 1, overflowY: 'auto', padding: '24px 32px' }}>
+              <div style={{ maxWidth: '840px', margin: '0 auto', width: '100%', paddingBottom: '40px' }}>
+                
+                {/* 顶部标题与摘要卡片 */}
+                <div style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '20px', marginBottom: '24px' }}>
+                  <h1 style={{ fontSize: '20px', fontWeight: '700', color: 'var(--text-main)', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <FileText size={20} style={{ color: 'var(--accent-color)' }} />
+                    {selectedWiki.title}
+                  </h1>
+                  <div style={{ background: 'var(--bg-card-header, #F9FAFB)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '16px', fontSize: '13px', color: 'var(--text-main)', lineHeight: '1.6' }}>
+                    <div style={{ fontWeight: '600', color: 'var(--text-main)', marginBottom: '6px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <Activity size={13} style={{ color: 'var(--accent-color)' }} /> AI 自动生成全局摘要
+                    </div>
+                    {selectedWiki.summary || '暂无文档摘要。'}
+                  </div>
+                </div>
+
+                {/* 核心概念与专有名词 */}
+                <div style={{ marginBottom: '32px' }}>
+                  <h3 style={{ fontSize: '14px', fontWeight: '600', color: 'var(--text-main)', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Hexagon size={14} style={{ color: 'var(--accent-color)' }} /> 核心概念与专有名词 ({selectedWiki.concepts ? selectedWiki.concepts.length : 0})
+                  </h3>
+                  {!selectedWiki.concepts || selectedWiki.concepts.length === 0 ? (
+                    <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>未提取到核心名词。</p>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                      {selectedWiki.concepts.map((c, idx) => (
+                        <div key={idx} style={{ background: '#FFF', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '16px', boxShadow: '0 1px 2px rgba(0,0,0,0.01)' }}>
+                          <div style={{ fontWeight: '600', color: 'var(--text-main)', fontSize: '13px', marginBottom: '4px' }}>
+                            {c.key}
+                          </div>
+                          <div style={{ fontSize: '13px', color: '#4B5563', lineHeight: '1.5', marginBottom: '8px' }}>
+                            {c.value}
+                          </div>
+                          {c.citation && (
+                            <div style={{ fontSize: '12px', color: 'var(--text-secondary)', background: '#F9FAFB', padding: '10px 12px', borderLeft: '3px solid var(--accent-light, #EEF2FF)', borderRadius: '4px' }}>
+                              <span style={{ fontWeight: '500', color: '#4B5563' }}>原文依据:</span> “{c.citation}”
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* 关键条款与合规规则 */}
+                <div style={{ marginBottom: '32px' }}>
+                  <h3 style={{ fontSize: '14px', fontWeight: '600', color: 'var(--text-main)', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Shield size={14} style={{ color: '#10B981' }} /> 关键条款与合规规则 ({selectedWiki.clauses ? selectedWiki.clauses.length : 0})
+                  </h3>
+                  {!selectedWiki.clauses || selectedWiki.clauses.length === 0 ? (
+                    <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>未提取到关键条款。</p>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                      {selectedWiki.clauses.map((c, idx) => (
+                        <div key={idx} style={{ background: '#FFF', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '16px', boxShadow: '0 1px 2px rgba(0,0,0,0.01)' }}>
+                          <div style={{ fontWeight: '600', color: 'var(--text-main)', fontSize: '13px', marginBottom: '4px' }}>
+                            {c.key}
+                          </div>
+                          <div style={{ fontSize: '13px', color: '#4B5563', lineHeight: '1.5', marginBottom: '8px' }}>
+                            {c.value}
+                          </div>
+                          {c.citation && (
+                            <div style={{ fontSize: '12px', color: '#6B7280', background: '#F9FAFB', padding: '10px 12px', borderLeft: '3px solid #D1FAE5', borderRadius: '4px' }}>
+                              <span style={{ fontWeight: '500', color: '#047857' }}>原文依据:</span> “{c.citation}”
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* 典型问答 FAQs */}
+                <div style={{ marginBottom: '32px' }}>
+                  <h3 style={{ fontSize: '14px', fontWeight: '600', color: 'var(--text-main)', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Lightbulb size={14} style={{ color: '#F59E0B' }} /> 典型问答 FAQs ({selectedWiki.faqs ? selectedWiki.faqs.length : 0})
+                  </h3>
+                  {!selectedWiki.faqs || selectedWiki.faqs.length === 0 ? (
+                    <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>未提取到常见问答。</p>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                      {selectedWiki.faqs.map((f, idx) => (
+                        <div key={idx} style={{ background: '#FFF', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '16px', boxShadow: '0 1px 2px rgba(0,0,0,0.01)' }}>
+                          <div style={{ fontWeight: '600', color: 'var(--text-main)', fontSize: '13px', marginBottom: '6px', display: 'flex', alignItems: 'flex-start', gap: '6px' }}>
+                            <span style={{ color: '#D97706', fontWeight: '700' }}>Q:</span>
+                            <span>{f.key}</span>
+                          </div>
+                          <div style={{ fontSize: '13px', color: '#4B5563', lineHeight: '1.5', marginBottom: '8px', paddingLeft: '20px', display: 'flex', alignItems: 'flex-start', gap: '6px' }}>
+                            <span style={{ color: '#059669', fontWeight: '700' }}>A:</span>
+                            <span>{f.value}</span>
+                          </div>
+                          {f.citation && (
+                            <div style={{ marginLeft: '20px', fontSize: '12px', color: '#6B7280', background: '#F9FAFB', padding: '10px 12px', borderLeft: '3px solid #FEF3C7', borderRadius: '4px' }}>
+                              <span style={{ fontWeight: '500', color: '#B45309' }}>原文依据:</span> “{f.citation}”
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* 完整编译 Wiki 全文 */}
+                {selectedWiki.markdown_content && (
+                  <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '24px', marginTop: '12px' }}>
+                    <h3 style={{ fontSize: '14px', fontWeight: '600', color: 'var(--text-main)', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <FileText size={14} style={{ color: 'var(--accent-color)' }} /> 完整编译 Wiki 全文
+                    </h3>
+                    <div style={{ background: '#FFF', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '24px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
+                      {renderMessageContent(selectedWiki.markdown_content)}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div style={{ textAlign: 'center', color: '#EF4444', marginTop: '40px', fontSize: '13px' }}>
+              暂无该文档的 Wiki 视图。
+            </div>
+          )}
+        </div>
+      ) : (
+        /* 智能对话工作台 */
+        (() => {
+          const rawUsername = username || '访客';
+          const displayUsername = isVisitorSession() ? '访客' : rawUsername;
+          const recentSessionsLimit = sessions.slice(0, 3); // 最多 3 条最近会话
+          
+          return (
+            <div className="main-workspace">
             {messages.length === 0 ? (
               /* 欢迎状态 (Figma 极致留白布局) */
               <div style={{ maxWidth: '900px', width: '100%', margin: '0 auto', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: 0, height: '100%' }}>
@@ -1627,6 +1911,51 @@ function App() {
 
                 {/* 4. 底部固定输入框 (高度 64px, 圆角 16px) */}
                 <div className="workspace-input-area">
+                  {/* 检索路由选择开关 (RAG vs Wiki) */}
+                  <div style={{ display: 'flex', gap: '8px', padding: '0 8px 8px', borderBottom: 'none' }}>
+                    <button
+                      type="button"
+                      onClick={() => setSearchMode('RAG_ONLY')}
+                      style={{
+                        padding: '4px 10px',
+                        fontSize: '11px',
+                        fontWeight: '600',
+                        borderRadius: '16px',
+                        border: '1px solid ' + (searchMode === 'RAG_ONLY' ? 'var(--accent-color, #4F46E5)' : 'var(--border-color, #E5E7EB)'),
+                        background: searchMode === 'RAG_ONLY' ? '#EEF2FF' : '#FFF',
+                        color: searchMode === 'RAG_ONLY' ? '#4F46E5' : 'var(--text-secondary, #6B7280)',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        transition: 'all 0.2s'
+                      }}
+                    >
+                      <Search size={12} />
+                      查原文细节 (RAG)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSearchMode('WIKI_ONLY')}
+                      style={{
+                        padding: '4px 10px',
+                        fontSize: '11px',
+                        fontWeight: '600',
+                        borderRadius: '16px',
+                        border: '1px solid ' + (searchMode === 'WIKI_ONLY' ? 'var(--accent-color, #4F46E5)' : 'var(--border-color, #E5E7EB)'),
+                        background: searchMode === 'WIKI_ONLY' ? '#EEF2FF' : '#FFF',
+                        color: searchMode === 'WIKI_ONLY' ? '#4F46E5' : 'var(--text-secondary, #6B7280)',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        transition: 'all 0.2s'
+                      }}
+                    >
+                      <FileText size={12} />
+                      查概念总结 (Wiki)
+                    </button>
+                  </div>
                   <div className="input-bar-inner-container">
                     <form onSubmit={(e) => handleSendMessage(e)} className="input-bar-inner">
                       {/* 点击 📎 触发专属知识库文件上传 */}
@@ -1864,6 +2193,51 @@ function App() {
                 </div>
 
                 <div className="workspace-input-area">
+                  {/* 检索路由选择开关 (RAG vs Wiki) */}
+                  <div style={{ display: 'flex', gap: '8px', padding: '0 8px 8px', borderBottom: 'none' }}>
+                    <button
+                      type="button"
+                      onClick={() => setSearchMode('RAG_ONLY')}
+                      style={{
+                        padding: '4px 10px',
+                        fontSize: '11px',
+                        fontWeight: '600',
+                        borderRadius: '16px',
+                        border: '1px solid ' + (searchMode === 'RAG_ONLY' ? 'var(--accent-color, #4F46E5)' : 'var(--border-color, #E5E7EB)'),
+                        background: searchMode === 'RAG_ONLY' ? '#EEF2FF' : '#FFF',
+                        color: searchMode === 'RAG_ONLY' ? '#4F46E5' : 'var(--text-secondary, #6B7280)',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        transition: 'all 0.2s'
+                      }}
+                    >
+                      <Search size={12} />
+                      查原文细节 (RAG)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSearchMode('WIKI_ONLY')}
+                      style={{
+                        padding: '4px 10px',
+                        fontSize: '11px',
+                        fontWeight: '600',
+                        borderRadius: '16px',
+                        border: '1px solid ' + (searchMode === 'WIKI_ONLY' ? 'var(--accent-color, #4F46E5)' : 'var(--border-color, #E5E7EB)'),
+                        background: searchMode === 'WIKI_ONLY' ? '#EEF2FF' : '#FFF',
+                        color: searchMode === 'WIKI_ONLY' ? '#4F46E5' : 'var(--text-secondary, #6B7280)',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        transition: 'all 0.2s'
+                      }}
+                    >
+                      <FileText size={12} />
+                      查概念总结 (Wiki)
+                    </button>
+                  </div>
                   <div className="input-bar-inner-container">
                     <form onSubmit={(e) => handleSendMessage(e)} className="input-bar-inner">
                       <button 
@@ -1892,7 +2266,8 @@ function App() {
             )}
           </div>
         );
-      })()}
+      })()
+      )}
 
       {!rightPanelCollapsed && (
         <div className="resizer-bar vertical-resizer" onMouseDown={handleRightResizeMouseDown} />
@@ -1989,11 +2364,51 @@ function App() {
                 })}
               </div>
 
+              {/* 1.5 MCP Tools 服务层 */}
+              <h3 className="dev-section-title" style={{ marginTop: '16px', marginBottom: '8px' }}>MCP Tools 服务层</h3>
+              <div className="dev-health-card" style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '12px', background: 'var(--panel-bg-dark, #F9FAFB)', border: '1px solid var(--border-color)', borderRadius: '8px', marginBottom: '16px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '13px', fontWeight: '600', color: '#111827' }}>MCP-ready stdio 服务</span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: '#22C55E', fontWeight: '500' }}>
+                    <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#22C55E', display: 'inline-block' }}></span>
+                    Ready
+                  </span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', borderTop: '1px dashed var(--border-color)', paddingTop: '8px' }}>
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '4px' }}>
+                    <code style={{ fontSize: '11px', background: '#E0F2FE', color: '#0369A1', padding: '2px 6px', borderRadius: '4px' }}>search_documents</code>
+                    <code style={{ fontSize: '11px', background: '#E0F2FE', color: '#0369A1', padding: '2px 6px', borderRadius: '4px' }}>answer_with_citations</code>
+                    <code style={{ fontSize: '11px', background: '#E0F2FE', color: '#0369A1', padding: '2px 6px', borderRadius: '4px' }}>list_documents</code>
+                  </div>
+                  <span style={{ fontSize: '11px', color: '#6B7280', lineHeight: '1.4' }}>
+                    已导出当前租户的 RAG 核心工具集，可直接在 Cursor / Claude Desktop 等 IDE Agent 中挂载与调用。
+                  </span>
+                </div>
+              </div>
+
               {/* 2. TRACE PIPELINE */}
               <h3 className="dev-trace-uppercase-title">TRACE PIPELINE</h3>
               <div className="dev-trace-list">
                 {traceStages.length === 0 ? (
-                  <div className="dev-empty-state">暂无真实 Trace，请先发起一次问答。</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: '100%' }}>
+                    <div style={{ fontSize: '11px', color: '#6B7280', marginBottom: '4px' }}>租户流式链路监听中 (静态预览模式)：</div>
+                    {[
+                      { name: "1. Query Rewrite (指代消解与多路分词)", desc: "意图重写 Agent" },
+                      { name: "2. Hybrid Retrieval (混合多路检索)", desc: "Chroma 向量检索 + 租户隔离 BM25" },
+                      { name: "3. RRF Ensemble (多路召回融合)", desc: "Reciprocal Rank Fusion 多路融合" },
+                      { name: "4. Flashrank Rerank (重排精选)", desc: "轻量级本地交叉编码器重排" },
+                      { name: "5. Critic Agent Guard (证据评估)", desc: "相关性打分与超纲拒答判定" },
+                      { name: "6. SSE Answer Generator (流式响应)", desc: "大模型 SSE 流式输出与历史落库" }
+                    ].map((step, idx) => (
+                      <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#FFFFFF', border: '1px solid var(--border-color)', borderRadius: '6px', padding: '8px 10px' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                          <span style={{ fontSize: '12px', fontWeight: '500', color: '#374151' }}>{step.name}</span>
+                          <span style={{ fontSize: '11px', color: '#9CA3AF' }}>{step.desc}</span>
+                        </div>
+                        <span style={{ fontSize: '10px', color: '#3B82F6', background: '#EFF6FF', border: '1px solid #BFDBFE', padding: '1px 6px', borderRadius: '4px', whiteSpace: 'nowrap' }}>监听中</span>
+                      </div>
+                    ))}
+                  </div>
                 ) : (
                   traceStages.map((stage, stageIndex) => (
                     <div key={`${stage.name}-${stageIndex}`} className="dev-trace-item-row">

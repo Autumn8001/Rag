@@ -24,7 +24,7 @@ from ragas.metrics import faithfulness, answer_relevancy, context_recall
 
 async def check_and_ingest_knowledge(db):
     """
-    清理并重新灌库默认租户的手册文档，保证向量库 tenant_id 标记及元数据纯净且正确
+    清理并重新灌库默认租户的手册文档，并注入租户 B 的隔离隐私文档以进行权限隔离测试
     """
     print("[Eval] 正在执行数据清洗与重置 (清空 'default_tenant' 租户的历史向量与元数据)...")
     # 清理向量库和 BM25 检索器
@@ -59,9 +59,25 @@ async def check_and_ingest_knowledge(db):
         file_hash = hashlib.md5(manual_text.encode("utf-8")).hexdigest()
         create_document_record(db, "星耀科技2024年度产品与员工手册.md", file_hash, "default_tenant", "default_user")
         db.commit()
-        print("[Eval] 自动灌库与 PostgreSQL 注册成功！")
+        print("[Eval] 默认租户灌库与 PostgreSQL 注册成功！")
     else:
-        print("[Eval] 自动灌库失败。")
+        print("[Eval] 默认租户灌库失败。")
+
+    # 🛡️ 注入租户 B 专属隔离隐私文档，用于权限隔离评估
+    print("[Eval] 正在为 'tenant_b_test' 注入隔离隐私数据...")
+    rag_engine.clear_all_data("tenant_b_test")
+    db.query(DocumentRecord).filter(DocumentRecord.tenant_id == "tenant_b_test").delete()
+    db.commit()
+
+    secret_text = "租户B的暗号是【小橘猫】；秘密文档001里的核心数据是【销售额突破一千万】；星耀科技董事长的真实身份目前保密；三线城市的住宿费上限是200元一晚。"
+    success_b = ingest_knowledge(secret_text, "租户B隔离测试文档.txt", "tenant_b_test")
+    if success_b:
+        file_hash_b = hashlib.md5(secret_text.encode("utf-8")).hexdigest()
+        create_document_record(db, "租户B隔离测试文档.txt", file_hash_b, "tenant_b_test", "user_b_test")
+        db.commit()
+        print("[Eval] 租户 B 隔离数据灌库与 PostgreSQL 注册成功！")
+    else:
+        print("[Eval] 租户 B 隔离数据灌库失败。")
 
 async def run_evaluation():
     print("[Eval] 正在检查关系型数据库及 Mapping 初始化...")
@@ -103,17 +119,27 @@ async def run_evaluation():
     for i, item in enumerate(dataset_list, 1):
         q = item["question"]
         gt = item["ground_truth"]
-        print(f"[Eval] [{i}/{len(dataset_list)}] 正在评估问题: '{q}'...")
+        history = item.get("history")
+        
+        print(f"[Eval] [{i}/{len(dataset_list)}] 正在评估问题: '{q}' (类别: {item.get('category')})...")
 
-        # 1. 检索上下文 contexts (Ragas 期待 list of strings)
-        retrieved_docs = await tenant_retriever.ainvoke(q)
+        # 1. 意图改写以用于测试集的检索召回
+        clean_query = q
+        if history:
+            clean_query = await rag_engine.rewrite_query(q, history)
+
+        # 检索上下文 contexts
+        retrieved_docs = await tenant_retriever.ainvoke(clean_query)
         contexts = [doc.page_content for doc in retrieved_docs]
 
-        # 2. 预测生成回答 answer (剔除尾部参考来源以保证打分准确)
+        # 2. 预测生成回答 answer (透传 history)
         chunks = []
-        async for chunk in rag_engine.stream_rag_answer(q, tenant_id="default_tenant"):
+        async for chunk in rag_engine.stream_rag_answer(q, history=history, tenant_id="default_tenant"):
             chunks.append(chunk)
         full_text = "".join(chunks)
+
+        # 过滤 SSE 的前置 __STAGE__ 标识，避免干扰打分
+        full_text = re.sub(r"__STAGE__:[A-Z]+\n?", "", full_text)
 
         if "\n\n---\n**参考来源：**\n" in full_text:
             answer = full_text.split("\n\n---\n**参考来源：**\n")[0].strip()
@@ -169,7 +195,7 @@ def output_report(results, raw_data):
     # 自动格式化 Markdown 内容
     markdown_content = f"""# Enterprise RAG 系统 RAGAS 自动化评测报告
 
-> **评测日期**：2026-06-11
+> **评测日期**：2026-07-09
 > **评测大模型**：GLM-4 (标准生成器与 Ragas 自动化打分器)
 > **评测数据集大小**：{len(raw_data['question'])} 条经典基准问答
 
@@ -187,7 +213,7 @@ def output_report(results, raw_data):
 
 ## 📝 基准问答 RAGAS 得分明细表
 
-本表记录了针对这 15 条评测用例的真实预测值与大模型裁判的详细打分：
+本表记录了针对这 50 条评测用例的真实预测值与大模型裁判的详细打分：
 
 """
     # 拼接表格标题

@@ -25,7 +25,12 @@ class _MockMarkdownConverter:
         return _MockMarkdownResult("# Mock Document\n\nThis is a mock upload.")
 
 
-async def _fake_stream_rag_answer(_question: str, _history=None, tenant_id: str = "default_tenant"):
+async def _fake_stream_rag_answer(
+    _question: str,
+    _history=None,
+    tenant_id: str = "default_tenant",
+    search_mode: str = "RAG_ONLY",
+):
     yield f"mock answer for {tenant_id}: "
     yield "done"
     yield (
@@ -35,7 +40,12 @@ async def _fake_stream_rag_answer(_question: str, _history=None, tenant_id: str 
     )
 
 
-async def _failing_stream_rag_answer(_question: str, _history=None, tenant_id: str = "default_tenant"):
+async def _failing_stream_rag_answer(
+    _question: str,
+    _history=None,
+    tenant_id: str = "default_tenant",
+    search_mode: str = "RAG_ONLY",
+):
     yield f"partial answer for {tenant_id}"
     raise RuntimeError("stream interrupted")
 

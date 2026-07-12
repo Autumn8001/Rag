@@ -9,6 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from api.admin_routes import router as admin_router
 from api.auth_routes import router as auth_router
 from api.chat_routes import router as chat_router
+from api.tool_routes import router as tool_router
+from api.wiki_routes import router as wiki_router
 from core.config import settings
 from core.database import cleanup_expired_temporary_visitors, init_db
 
@@ -67,6 +69,7 @@ app.add_middleware(
         "http://127.0.0.1:5174",
         "http://localhost:5178",
         "http://127.0.0.1:5178",
+        "http://stellarbit.site:5178",  # 允许公网前端服务跨域请求
         "http://localhost:8501",
     ],
     allow_credentials=True,
@@ -77,6 +80,9 @@ app.add_middleware(
 app.include_router(chat_router)
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")
+app.include_router(tool_router, prefix="/api/v1")
+app.include_router(wiki_router)
+
 
 
 @app.get("/", tags=["System"])

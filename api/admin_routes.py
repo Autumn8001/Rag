@@ -16,7 +16,7 @@ from pathlib import Path
 from datetime import datetime, timezone, timedelta
 
 import requests as http_requests
-from fastapi import APIRouter, UploadFile, File, HTTPException, Query, Depends
+from fastapi import APIRouter, UploadFile, File, HTTPException, Query, Depends, BackgroundTasks
 from markitdown import MarkItDown
 from sqlalchemy.orm import Session
 
@@ -210,6 +210,7 @@ async def fetch_traces(
 
 @router.post("/upload", summary="Upload and index a document")
 async def upload_document(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -239,7 +240,7 @@ async def upload_document(
 
         await file.seek(0)
         
-        # 物理隔离存放上传文件 (防止路径穿越并采用 UUID 重命名落盘)
+        # 采用独立沙箱空间存放上传文件 (防止路径穿越并采用 UUID 重命名落盘)
         upload_dir = f"data/uploads/{tenant_id}"
         os.makedirs(upload_dir, exist_ok=True)
         
@@ -257,13 +258,43 @@ async def upload_document(
         if not success:
             raise HTTPException(status_code=500, detail="Failed to index document.")
  
-        create_document_record(
+        doc_record = create_document_record(
             db=db,
             filename=orig_filename,
             file_hash=file_hash,
             tenant_id=tenant_id,
             user_id=user_id
         )
+
+        # 🚀 采用 FastAPI BackgroundTasks 异步触发 Wiki 知识编译器生成，防范 HTTP 请求超时 (504)
+        from core.wiki_service import generate_and_save_wiki
+        
+        async def run_wiki_compilation_bg(doc_id_val, tenant_id_val, user_id_val, orig_filename_val, md_text_val):
+            from core.database import SessionLocal
+            bg_db = SessionLocal()
+            try:
+                await generate_and_save_wiki(
+                    db=bg_db,
+                    document_id=doc_id_val,
+                    tenant_id=tenant_id_val,
+                    user_id=user_id_val,
+                    orig_filename=orig_filename_val,
+                    md_text=md_text_val
+                )
+            except Exception as wiki_err:
+                logger.error("Background Wiki compilation failed for '%s': %s", orig_filename_val, wiki_err)
+            finally:
+                bg_db.close()
+                
+        background_tasks.add_task(
+            run_wiki_compilation_bg,
+            doc_record.id,
+            tenant_id,
+            user_id,
+            orig_filename,
+            md_text
+        )
+
         return {
             "status": "success",
             "message": f"File '{orig_filename}' has been indexed successfully.",

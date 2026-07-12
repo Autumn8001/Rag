@@ -1,62 +1,272 @@
 [
   {
+    "category": "事实查询",
     "question": "Nova Pro 的定价是多少？",
     "ground_truth": "2999元。"
   },
   {
+    "category": "事实查询",
     "question": "Nova Lite 采用的是什么表面玻璃？",
     "ground_truth": "康宁大猩猩玻璃。"
   },
   {
+    "category": "条件过滤",
     "question": "如果我想买支持独立通话的手表，应该选哪款？",
     "ground_truth": "Nova Pro。"
   },
   {
+    "category": "条件过滤",
     "question": "Nova Lite 的防水等级能否在热水中使用并享受保修？",
     "ground_truth": "不能。热水使用属于免责条款。"
   },
   {
+    "category": "数值推理",
     "question": "一位星耀老用户在双11期间购买一块 Nova Pro，实际需要支付多少钱？",
     "ground_truth": "2429.1元。(2699×0.9)"
   },
   {
+    "category": "数值推理",
     "question": "普通用户在双11期间购买 Nova Pro 和一条真皮表带，总共多少钱？",
     "ground_truth": "2898元。(2699+199)"
   },
   {
+    "category": "跨段落问题",
     "question": "加购了\"尊享无忧包\"的 Nova Pro，总保修期是多久？",
     "ground_truth": "3年。"
   },
   {
+    "category": "跨段落问题",
     "question": "普通员工二线城市出差3天(含1天周末未调休)，能拿多少补贴？",
     "ground_truth": "390元。(80×3+150)"
   },
   {
+    "category": "跨段落问题",
     "question": "文档中提到的免费保修免责条款有哪些情况？",
-    "ground_truth": "1.玻璃破碎 2.进水 3.私自拆机"
+    "ground_truth": "1.表面玻璃破碎/划痕 2.进水损坏（3ATM设备浸泡超30分钟，或5ATM设备在热水中使用） 3.私自拆机"
   },
   {
+    "category": "无答案拒答",
     "question": "Nova Pro 的原装表带是什么颜色的？",
-    "ground_truth": "文档中未提及。"
+    "ground_truth": "在参考资料中未找到相关信息。"
   },
   {
+    "category": "无答案拒答",
     "question": "如果我 12 月份购买 Nova Lite，能享受直降 100 元的优惠吗？",
-    "ground_truth": "文档无法确定。(仅明确双11)"
+    "ground_truth": "在参考资料中未找到相关信息。(双11活动时间为11月1日至11月11日)"
   },
   {
+    "category": "条件过滤",
     "question": "购买 Nova Lite 的老用户，在双11下单后可以7天无理由退货吗？",
-    "ground_truth": "不可以。老用户折扣订单不支持。"
+    "ground_truth": "不可以。老用户折扣订单不支持7天无理由退货。"
   },
   {
+    "category": "数值推理",
     "question": "3ATM 防水设备在淡水中浸泡 20 分钟导致损坏，能免费保修吗？",
-    "ground_truth": "能。(未超过30分钟免责阈值)"
+    "ground_truth": "能。因为没有超过30分钟的免责阈值。"
   },
   {
+    "category": "跨段落问题",
     "question": "加购\"尊享无忧包\"除了延长保修，还有什么额外权益？",
     "ground_truth": "包含一次免费表带更换服务。"
   },
   {
+    "category": "跨段落问题",
     "question": "张三（总监）去上海出差4晚，住宿最多能报销多少？",
-    "ground_truth": "2000元。(一线城市500/晚)"
+    "ground_truth": "2000元。(一线城市500/晚 × 4)"
+  },
+  {
+    "category": "事实查询",
+    "question": "Nova Pro 支持哪些健康监测功能？",
+    "ground_truth": "血压监测与血氧监测。"
+  },
+  {
+    "category": "事实查询",
+    "question": "Nova Lite 支持哪些健康监测功能？",
+    "ground_truth": "仅支持血氧监测。"
+  },
+  {
+    "category": "事实查询",
+    "question": "Nova Pro 的续航时间是多少天？",
+    "ground_truth": "15天。"
+  },
+  {
+    "category": "事实查询",
+    "question": "Nova Lite 的续航时间是多少天？",
+    "ground_truth": "10天。"
+  },
+  {
+    "category": "专有名词/型号",
+    "question": "Nova Pro 的防水等级是多少？",
+    "ground_truth": "5ATM。"
+  },
+  {
+    "category": "专有名词/型号",
+    "question": "Nova Lite 的防水等级是多少？",
+    "ground_truth": "3ATM。"
+  },
+  {
+    "category": "专有名词/型号",
+    "question": "加购\"尊享无忧包\"需要支付多少钱？",
+    "ground_truth": "199元。"
+  },
+  {
+    "category": "条件过滤",
+    "question": "非老用户订单在双11购买设备后，享受7天无理由退货吗？",
+    "ground_truth": "享受。非老用户订单仍享受7天无理由退货。"
+  },
+  {
+    "category": "无答案拒答",
+    "question": "高管去国外出差，每日餐饮补贴是多少？",
+    "ground_truth": "在参考资料中未找到相关信息。"
+  },
+  {
+    "category": "无答案拒答",
+    "question": "员工出差乘坐高铁，可以购买一等座吗？",
+    "ground_truth": "在参考资料中未找到相关信息。"
+  },
+  {
+    "category": "事实查询",
+    "question": "两款智能穿戴设备常规的官方保修期是多久？",
+    "ground_truth": "1年官方保修。"
+  },
+  {
+    "category": "事实查询",
+    "question": "出差申请需要在哪个系统中提交？",
+    "ground_truth": "OA系统。"
+  },
+  {
+    "category": "条件过滤",
+    "question": "总监级以下员工出差，交通工具的标准是什么？",
+    "ground_truth": "乘坐经济舱。"
+  },
+  {
+    "category": "条件过滤",
+    "question": "总监级及以上员工出差，交通工具的标准是什么？",
+    "ground_truth": "可乘坐商务舱。"
+  },
+  {
+    "category": "事实查询",
+    "question": "一线城市和二线城市的出差住宿报销上限分别是多少？",
+    "ground_truth": "一线城市（北上广深）上限500元/晚；二线城市上限350元/晚。"
+  },
+  {
+    "category": "事实查询",
+    "question": "员工出差期间每日的餐饮补贴是多少元？",
+    "ground_truth": "每日享有80元餐饮补贴。"
+  },
+  {
+    "category": "数值推理",
+    "question": "如果普通员工在一线城市出差2晚，住宿最多报销多少？",
+    "ground_truth": "1000元。(500元/晚 × 2)"
+  },
+  {
+    "category": "数值推理",
+    "question": "老用户双11买 Nova Lite 到底需要付多少钱？",
+    "ground_truth": "1349.1元。(1599 - 100 = 1499元，再打9折为1349.1元)"
+  },
+  {
+    "category": "跨段落问题",
+    "question": "员工去北京出差5天，出差期间包含一个周末（未调休），餐饮补贴和周末加班补贴总共多少？",
+    "ground_truth": "550元。(餐饮补贴 80×5 = 400元，周末加班补贴 150元)"
+  },
+  {
+    "category": "无答案拒答",
+    "question": "三线城市的差旅住宿上限是多少？",
+    "ground_truth": "在参考资料中未找到相关信息。"
+  },
+  {
+    "category": "多轮追问",
+    "question": "它防水吗？",
+    "history": [
+      {"role": "user", "content": "我想了解一下 Nova Pro 手表"},
+      {"role": "assistant", "content": "Nova Pro 定价 2999 元，支持 eSIM 独立通话。"}
+    ],
+    "ground_truth": "支持。Nova Pro 的防水等级为 5ATM (但不能在热水中使用)。"
+  },
+  {
+    "category": "多轮追问",
+    "question": "那另一款呢？支持独立通话吗？",
+    "history": [
+      {"role": "user", "content": "我想了解一下 Nova Pro 手表"},
+      {"role": "assistant", "content": "Nova Pro 定价 2999 元，支持 eSIM 独立通话。"}
+    ],
+    "ground_truth": "另一款是 Nova Lite，不支持 eSIM 独立通话。"
+  },
+  {
+    "category": "多轮追问",
+    "question": "它保修多久？",
+    "history": [
+      {"role": "user", "content": "我想买一块 Nova Pro 并加购尊享无忧包。"},
+      {"role": "assistant", "content": "加购尊享无忧包价格为 199 元。"}
+    ],
+    "ground_truth": "加购\"尊享无忧包\"后，Nova Pro 的保修期延长至 3 年。"
+  },
+  {
+    "category": "多轮追问",
+    "question": "如果是老用户呢？",
+    "history": [
+      {"role": "user", "content": "在双11期间购买 Nova Pro 有折扣吗？"},
+      {"role": "assistant", "content": "双11期间 Nova Pro 直降 300 元。"}
+    ],
+    "ground_truth": "老用户凭注册手机号，可在折后价基础上再享 9 折优惠。"
+  },
+  {
+    "category": "多轮追问",
+    "question": "普通员工可以坐吗？",
+    "history": [
+      {"role": "user", "content": "差旅报销中关于坐商务舱的规定是什么？"},
+      {"role": "assistant", "content": "总监级及以上出差可以乘坐商务舱。"}
+    ],
+    "ground_truth": "不可以，普通员工出差只能乘坐经济舱。"
+  },
+  {
+    "category": "引用来源正确性",
+    "question": "员工出差报销需要OA审批吗？",
+    "ground_truth": "需要。员工出差需提前在OA系统提交申请。"
+  },
+  {
+    "category": "引用来源正确性",
+    "question": "Nova Pro 原装表带的材质是什么？",
+    "ground_truth": "两款设备均标配硅胶质表带。"
+  },
+  {
+    "category": "引用来源正确性",
+    "question": "选配的真皮表带多少钱一条？",
+    "ground_truth": "199元。"
+  },
+  {
+    "category": "无答案拒答",
+    "question": "星耀科技的CEO叫什么名字？",
+    "ground_truth": "在参考资料中未找到相关信息。"
+  },
+  {
+    "category": "无答案拒答",
+    "question": "智能手表可以下载微信吗？",
+    "ground_truth": "在参考资料中未找到相关信息。"
+  },
+  {
+    "category": "无答案拒答",
+    "question": "老用户双11的折扣优惠可以跟国补折叠使用吗？",
+    "ground_truth": "在参考资料中未找到相关信息。"
+  },
+  {
+    "category": "权限隔离",
+    "question": "租户B的暗号是什么？",
+    "ground_truth": "在参考资料中未找到相关信息。(无访问权限)"
+  },
+  {
+    "category": "权限隔离",
+    "question": "秘密文档 001 里的核心数据是什么？",
+    "ground_truth": "在参考资料中未找到相关信息。(无访问权限)"
+  },
+  {
+    "category": "事实查询",
+    "question": "促销手册中明确的双十一大促时间范围是？",
+    "ground_truth": "11月1日至11月11日。"
+  },
+  {
+    "category": "事实查询",
+    "question": "如果超出出差住宿限额该怎么办？",
+    "ground_truth": "超出部分需提供合理说明，否则自行承担。"
   }
 ]

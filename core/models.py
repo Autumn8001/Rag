@@ -93,3 +93,34 @@ class User(Base):
     is_temporary = Column(Boolean, nullable=False, default=False, server_default="false")
     expires_at = Column(DateTime, nullable=True, index=True)
     last_active_at = Column(DateTime, nullable=True)
+
+
+# ==========================================
+# 📖 第五张表：Wiki 页面表 (元数据)
+# ==========================================
+class WikiPage(Base):
+    __tablename__ = "wiki_pages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(String, index=True, nullable=False, server_default="default_tenant")
+    user_id = Column(String, index=True, nullable=False, server_default="default_user")
+    document_id = Column(Integer, index=True, nullable=False) # 关联的 DocumentRecord.id
+    title = Column(String, nullable=False)
+    summary = Column(Text, nullable=False)                    # 文档宏观摘要
+    markdown_content = Column(Text, nullable=False)           # 自动编译出来的完整 Wiki Markdown 内容
+    created_at = Column(DateTime, default=datetime.now)
+
+
+# ==========================================
+# 📌 第六张表：Wiki 条目表 (核心概念/关键条款/FAQs的细节)
+# ==========================================
+class WikiItem(Base):
+    __tablename__ = "wiki_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    wiki_page_id = Column(Integer, index=True, nullable=False) # 关联的 WikiPage.id
+    category = Column(String, nullable=False)                  # 'concept' / 'clause' / 'faq'
+    key = Column(String, nullable=False)                       # 核心词、条款标题、或 FAQ 提问
+    value = Column(Text, nullable=False)                       # 释义、条款正文、或 FAQ 回答
+    citation = Column(Text, nullable=True)                     # 关联的原文出处 Chunks
+

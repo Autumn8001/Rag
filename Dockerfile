@@ -5,20 +5,27 @@ FROM python:3.13-slim AS builder
 
 WORKDIR /app
 
-# 安装 uv 包管理器
-RUN pip install --no-cache-dir uv
+# 安装 uv 包管理器（使用清华 PyPI 镜像源加速）
+RUN pip install --no-cache-dir uv -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 # 先复制依赖声明文件（代码未变更时此层可复用缓存）
 COPY pyproject.toml uv.lock ./
 
 # 将依赖安装到系统 Python，避免在容器内使用虚拟环境的复杂性
 ENV UV_PROJECT_ENVIRONMENT=/usr/local
+# 配置 uv 使用国内镜像源加速包同步
+ENV UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 RUN uv sync --frozen --no-dev
 
 # ============================================================
 # Stage 2: 运行时镜像
 # ============================================================
 FROM python:3.13-slim
+
+# 安装运行时音频与文档处理所需的系统依赖（ffmpeg 供音频和音轨解析转换）
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 

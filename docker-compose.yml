@@ -28,6 +28,10 @@ services:
       - "8010:8000"
     volumes:
       - rag_data:/app/data
+      - ./core:/app/core
+      - ./api:/app/api
+      - ./schemas:/app/schemas
+      - ./main.py:/app/main.py
     env_file:
       - .env
     environment:
@@ -51,8 +55,8 @@ services:
       context: .
       dockerfile: Dockerfile.frontend
       args:
-        # 【部署提示】：若部署到服务器，请在此处将 localhost 改为您的服务器公网 IP 或域名
-        - VITE_API_BASE_URL=http://stellarbit.site:8010/api/v1
+        # 使用同源相对路径代理解决跨域问题（经由 Nginx location /api/ 转发至后端）
+        - VITE_API_BASE_URL=/api/v1
     container_name: rag_frontend
     ports:
       - "5178:80"

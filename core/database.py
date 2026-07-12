@@ -9,7 +9,7 @@ from sqlalchemy import inspect, text, or_, and_
 from sqlalchemy.orm import sessionmaker
 
 from core.config import settings
-from core.models import APIKeyMap, Base, ChatHistory, DocumentRecord, User
+from core.models import APIKeyMap, Base, ChatHistory, DocumentRecord, User, WikiPage, WikiItem
 from core.rag_engine import clear_all_data
 
 

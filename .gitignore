@@ -43,6 +43,11 @@ logs/
 # Personal planning / scratch files (not for GitHub)
 AI_Plan.md
 EnterpriseRAG_Task.md
+Enterprise_RAG_Task.md
+
+# Large files and builds
+*.tar
+*.tar.gz
 
 # UV lock file (optional, uncomment if you want to ignore it)
 # uv.lock

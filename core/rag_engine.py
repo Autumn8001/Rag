@@ -95,6 +95,7 @@ class MultiTenantRRFRetriever(BaseRetriever):
     vector_weight: float = 0.5
     bm25_weight: float = 0.5
     top_n: int = 8
+    doc_type: str = "document"
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -123,6 +124,12 @@ class MultiTenantRRFRetriever(BaseRetriever):
         results = await asyncio.gather(*tasks)
         vector_docs = results[0]
         bm25_docs = results[1] if len(results) > 1 else []
+
+        # 过滤只保留符合当前检索 doc_type 类型的文档，避免 BM25 检索发生越界召回
+        bm25_docs = [
+            doc for doc in bm25_docs
+            if doc.metadata.get("doc_type", "document") == self.doc_type
+        ]
 
         vector_weight = self.vector_weight
         bm25_weight = self.bm25_weight
@@ -244,13 +251,15 @@ class RAGEngine:
                 self.bm25_retrievers[tenant_id] = None
         return self.bm25_retrievers[tenant_id]
 
-    def _get_tenant_retriever(self, tenant_id: str):
+    def _get_tenant_retriever(self, tenant_id: str, doc_type: str = "document"):
         vectorstore = self._get_vectorstore()
         if not vectorstore:
             return None
 
+        # 对齐多租户与知识空间（RAG/Wiki）的双重隔离
+        filter_dict = {"$and": [{"tenant_id": tenant_id}, {"doc_type": doc_type}]}
         base_retriever = vectorstore.as_retriever(
-            search_kwargs={"filter": {"tenant_id": tenant_id}, "k": 8}
+            search_kwargs={"filter": filter_dict, "k": 8}
         )
         bm25_retriever = self._get_bm25_retriever_for_tenant(tenant_id)
 
@@ -259,6 +268,7 @@ class RAGEngine:
                 vector_retriever=base_retriever,
                 bm25_retriever=bm25_retriever,
                 top_n=8,
+                doc_type=doc_type,
             )
         else:
             medium_retriever = base_retriever
@@ -352,8 +362,9 @@ class RAGEngine:
         md_text: str,
         source_filename: str,
         tenant_id: str = "default_tenant",
+        doc_type: str = "document",
     ) -> bool:
-        logger.info("Ingesting document for tenant '%s': %s", tenant_id, source_filename)
+        logger.info("Ingesting document for tenant '%s' (type=%s): %s", tenant_id, doc_type, source_filename)
         try:
             md_splitter = MarkdownHeaderTextSplitter(
                 headers_to_split_on=[("#", "H1"), ("##", "H2"), ("###", "H3")]
@@ -367,9 +378,10 @@ class RAGEngine:
             for chunk in final_chunks:
                 chunk.metadata["source"] = source_filename
                 chunk.metadata["tenant_id"] = tenant_id
+                chunk.metadata["doc_type"] = doc_type
                 ids.append(
                     hashlib.md5(
-                        (chunk.page_content + source_filename + tenant_id).encode("utf-8")
+                        (chunk.page_content + source_filename + tenant_id + doc_type).encode("utf-8")
                     ).hexdigest()
                 )
 
@@ -385,9 +397,10 @@ class RAGEngine:
             return True
         except Exception as exc:
             logger.error(
-                "Failed to ingest document '%s' for tenant %s: %s",
+                "Failed to ingest document '%s' for tenant %s (type=%s): %s",
                 source_filename,
                 tenant_id,
+                doc_type,
                 exc,
             )
             return False
@@ -427,14 +440,15 @@ class RAGEngine:
             if chunk.content:
                 yield chunk.content
 
-    @traceable(run_type="chain", name="stream_rag_answer")
+
     async def stream_rag_answer(
         self,
         question: str,
         history: list | None = None,
         tenant_id: str = "default_tenant",
+        search_mode: str = "RAG_ONLY",
     ):
-        logger.info("Processing question for tenant %s: %s", tenant_id, question)
+        logger.info("Processing question for tenant %s (mode=%s): %s", tenant_id, search_mode, question)
 
         if self._is_prompt_injection(question):
             yield "__STAGE__:GENERATING\n"
@@ -456,10 +470,101 @@ class RAGEngine:
         if history:
             history_text = "\n".join(f"{msg['role']}: {msg['content']}" for msg in history)
 
+        if search_mode == "WIKI_ONLY":
+            from core.database import SessionLocal
+            from core.models import WikiPage, WikiItem
+            db = SessionLocal()
+            try:
+                # 找出当前租户下的 Wiki 页面
+                wiki_pages = db.query(WikiPage).filter(WikiPage.tenant_id == tenant_id).all()
+                page_ids = [p.id for p in wiki_pages]
+                
+                matched_items = []
+                if page_ids:
+                    all_items = db.query(WikiItem).filter(WikiItem.wiki_page_id.in_(page_ids)).all()
+                    # 依据 Query 相似度粗筛
+                    for item in all_items:
+                        score = 0
+                        if item.key.lower() in clean_query.lower() or clean_query.lower() in item.key.lower():
+                            score += 15
+                        common_chars = set(item.key.lower()) & set(clean_query.lower())
+                        score += len(common_chars)
+                        if score > 0:
+                            matched_items.append((item, score))
+                    
+                    matched_items.sort(key=lambda x: x[1], reverse=True)
+                    matched_items = [x[0] for x in matched_items[:5]]
+                
+                if not matched_items:
+                    yield "__STAGE__:GENERATING\n"
+                    yield "在已编译的 Wiki 知识库中未匹配到相关专有名词或 FAQ。建议切换为“查原文细节 (RAG)”模式进行全文细粒度检索。"
+                    return
+                
+                # 拼接 Wiki 词条为上下文
+                context_parts = []
+                for item in matched_items:
+                    cat_name = "核心概念" if item.category == "concept" else "关键条款" if item.category == "clause" else "典型问答"
+                    context_parts.append(
+                        f"【{cat_name}】{item.key}\n内容解析: {item.value}\n原文安全溯源选段: {item.citation or '无'}"
+                    )
+                context_str = "\n\n---\n\n".join(context_parts)
+                
+                yield "__STAGE__:RETRIEVING\n" # 使 Trace 显示正确
+                yield "__STAGE__:RERANKING\n"
+                yield "__STAGE__:GENERATING\n"
+                
+                answer_prompt = ChatPromptTemplate.from_template(
+                    "你是一个专业的企业知识助手。请结合提供的 Wiki 词条与问答，以自然、专业、通顺的语气回答用户的问题。\n\n"
+                    "【回答要求】:\n"
+                    "1. 必须且只能基于提供的参考 Wiki 数据进行回答。回答结构应当【先进行简明扼要的总结，然后再分点展开详细说明】。\n"
+                    "2. 不要机械地照搬原文，要总结概括得有条理。\n"
+                    "3. 如果参考 Wiki 数据中没有答案，请说“在 Wiki 知识库中未找到相关概念回答”。\n\n"
+                    "参考 Wiki 数据:\n{context}\n\n"
+                    "用户问题:\n{input}\n"
+                )
+                chain = answer_prompt | standard_llm | StrOutputParser()
+                async for chunk in chain.astream(
+                    {"context": context_str, "input": clean_query}
+                ):
+                    yield chunk
+                
+                # 组装证据链
+                page_to_doc = {p.id: p.document_id for p in wiki_pages}
+                doc_ids = [page_to_doc.get(item.wiki_page_id) for item in matched_items if item.wiki_page_id in page_to_doc]
+                doc_map = {}
+                if doc_ids:
+                    from core.models import DocumentRecord
+                    docs = db.query(DocumentRecord).filter(DocumentRecord.id.in_(doc_ids)).all()
+                    doc_map = {d.id: d.filename for d in docs}
+                
+                chunks_payload = []
+                for item in matched_items:
+                    source_file = "未知来源"
+                    doc_id = page_to_doc.get(item.wiki_page_id)
+                    if doc_id and doc_id in doc_map:
+                        source_file = doc_map[doc_id]
+                    chunks_payload.append({
+                        "content": f"【{item.key}】: {item.value}",
+                        "source": source_file,
+                        "rrf_score": 0.99,
+                        "vector_rank": 1,
+                        "bm25_rank": 1,
+                        "h1": item.key,
+                        "h2": "",
+                        "h3": ""
+                    })
+                
+                metadata_str = json.dumps({"chunks": chunks_payload}, ensure_ascii=False)
+                yield f"\n\n{METADATA_START_MARKER}\n{metadata_str}\n{METADATA_END_MARKER}"
+                return
+            finally:
+                db.close()
+
         yield "__STAGE__:RETRIEVING\n"
         route = await self.classify_question(question)
         if "A" in route:
-            tenant_retriever = self._get_tenant_retriever(tenant_id)
+            doc_type = "wiki" if search_mode == "WIKI_ONLY" else "document"
+            tenant_retriever = self._get_tenant_retriever(tenant_id, doc_type=doc_type)
             if not tenant_retriever:
                 yield "__STAGE__:GENERATING\n"
                 yield MISSING_KNOWLEDGE_MESSAGE
@@ -561,8 +666,9 @@ async def stream_rag_answer(
     question: str,
     history: list | None = None,
     tenant_id: str = "default_tenant",
+    search_mode: str = "RAG_ONLY",
 ):
-    async for chunk in rag_engine.stream_rag_answer(question, history, tenant_id):
+    async for chunk in rag_engine.stream_rag_answer(question, history, tenant_id, search_mode):
         yield chunk
 
 
@@ -570,8 +676,9 @@ def ingest_knowledge(
     md_text: str,
     source_filename: str,
     tenant_id: str = "default_tenant",
+    doc_type: str = "document",
 ) -> bool:
-    return rag_engine.ingest_knowledge(md_text, source_filename, tenant_id)
+    return rag_engine.ingest_knowledge(md_text, source_filename, tenant_id, doc_type)
 
 
 def clear_all_data(tenant_id: str) -> bool:

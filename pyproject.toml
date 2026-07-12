@@ -22,4 +22,7 @@ dependencies = [
     "passlib[bcrypt]>=1.7.4",
     "bcrypt>=5.0.0",
     "pytest>=8.4.1",
+    "rank-bm25>=0.2.2",
+    "langchain-chroma>=0.1.2",
+    "pydub>=0.25.1",
 ]
