@@ -25,7 +25,7 @@
   - [x] 代码安全入库提交并推送 GitHub 远程仓库（分支 `main`）。
   - [x] SSH 远程腾讯云主机 `106.54.234.136` 并成功拉取最新代码，一键热重启后端并成功上线。
 
-- [ ] **代码审查缺陷修复 (Code Review Fixes)**
+- [x] **代码审查缺陷修复 (Code Review Fixes)**
   - [x] **P0 (致命)**: 恢复 `stream_rag_answer` 缺失的安全拦截、闲聊分流、问题改写及前置变量初始化。
   - [x] **P1 (严重)**: 补全前端 `wiki_items` 矢量卡片平铺渲染与 `expandedCitations` 独立会话展开 Map 交互逻辑。
   - [x] **P2 (严重)**: 清理 `chat_routes.py` 等文件中对已废弃 `search_mode` 传参及配置声明的残留。
