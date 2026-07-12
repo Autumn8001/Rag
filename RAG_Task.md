@@ -30,6 +30,7 @@
   - [x] **P1 (严重)**: 补全前端 `wiki_items` 矢量卡片平铺渲染与 `expandedCitations` 独立会话展开 Map 交互逻辑。
   - [x] **P2 (严重)**: 清理 `chat_routes.py` 等文件中对已废弃 `search_mode` 传参及配置声明的残留。
   - [x] **P3 (重要)**: 优化混合检索闲聊分类下的直通兜底以及 WikiItem 的匹配评分过滤算法。
+  - [x] **登录身份误判 Bug 修复**: 正式用户登录时未清空上一轮访客生命周期状态，导致身份错乱的严重安全 Bug（已完成前端 `updateVisitorLifecycleCache` 重构）。
 
 ---
 

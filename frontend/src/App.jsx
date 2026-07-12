@@ -247,15 +247,23 @@ function App() {
       setIsTemporaryVisitor(data.is_temporary);
       sessionStorage.setItem('is_temporary', String(data.is_temporary));
     }
-    if (data.expires_at) {
-      setSessionExpiresAt(data.expires_at);
-      sessionStorage.setItem('session_expires_at', data.expires_at);
-    }
-
-    const startedAt = data.created_at || data.last_active_at || '';
-    if (startedAt) {
-      setVisitorSessionStartedAt(startedAt);
-      sessionStorage.setItem('visitor_session_started_at', startedAt);
+    
+    if (data.is_temporary) {
+      if (data.expires_at) {
+        setSessionExpiresAt(data.expires_at);
+        sessionStorage.setItem('session_expires_at', data.expires_at);
+      }
+      const startedAt = data.created_at || data.last_active_at || '';
+      if (startedAt) {
+        setVisitorSessionStartedAt(startedAt);
+        sessionStorage.setItem('visitor_session_started_at', startedAt);
+      }
+    } else {
+      // 正式用户登录成功：必须立即且彻底清除上一轮可能残留的访客会话倒计时缓存
+      setSessionExpiresAt('');
+      setVisitorSessionStartedAt('');
+      sessionStorage.removeItem('session_expires_at');
+      sessionStorage.removeItem('visitor_session_started_at');
     }
   };
 
