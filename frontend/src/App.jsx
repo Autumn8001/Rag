@@ -1911,51 +1911,6 @@ function App() {
 
                 {/* 4. 底部固定输入框 (高度 64px, 圆角 16px) */}
                 <div className="workspace-input-area">
-                  {/* 检索路由选择开关 (RAG vs Wiki) */}
-                  <div style={{ display: 'flex', gap: '8px', padding: '0 8px 8px', borderBottom: 'none' }}>
-                    <button
-                      type="button"
-                      onClick={() => setSearchMode('RAG_ONLY')}
-                      style={{
-                        padding: '4px 10px',
-                        fontSize: '11px',
-                        fontWeight: '600',
-                        borderRadius: '16px',
-                        border: '1px solid ' + (searchMode === 'RAG_ONLY' ? 'var(--accent-color, #4F46E5)' : 'var(--border-color, #E5E7EB)'),
-                        background: searchMode === 'RAG_ONLY' ? '#EEF2FF' : '#FFF',
-                        color: searchMode === 'RAG_ONLY' ? '#4F46E5' : 'var(--text-secondary, #6B7280)',
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '4px',
-                        transition: 'all 0.2s'
-                      }}
-                    >
-                      <Search size={12} />
-                      查原文细节 (RAG)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSearchMode('WIKI_ONLY')}
-                      style={{
-                        padding: '4px 10px',
-                        fontSize: '11px',
-                        fontWeight: '600',
-                        borderRadius: '16px',
-                        border: '1px solid ' + (searchMode === 'WIKI_ONLY' ? 'var(--accent-color, #4F46E5)' : 'var(--border-color, #E5E7EB)'),
-                        background: searchMode === 'WIKI_ONLY' ? '#EEF2FF' : '#FFF',
-                        color: searchMode === 'WIKI_ONLY' ? '#4F46E5' : 'var(--text-secondary, #6B7280)',
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '4px',
-                        transition: 'all 0.2s'
-                      }}
-                    >
-                      <FileText size={12} />
-                      查概念总结 (Wiki)
-                    </button>
-                  </div>
                   <div className="input-bar-inner-container">
                     <form onSubmit={(e) => handleSendMessage(e)} className="input-bar-inner">
                       {/* 点击 📎 触发专属知识库文件上传 */}
@@ -2193,51 +2148,6 @@ function App() {
                 </div>
 
                 <div className="workspace-input-area">
-                  {/* 检索路由选择开关 (RAG vs Wiki) */}
-                  <div style={{ display: 'flex', gap: '8px', padding: '0 8px 8px', borderBottom: 'none' }}>
-                    <button
-                      type="button"
-                      onClick={() => setSearchMode('RAG_ONLY')}
-                      style={{
-                        padding: '4px 10px',
-                        fontSize: '11px',
-                        fontWeight: '600',
-                        borderRadius: '16px',
-                        border: '1px solid ' + (searchMode === 'RAG_ONLY' ? 'var(--accent-color, #4F46E5)' : 'var(--border-color, #E5E7EB)'),
-                        background: searchMode === 'RAG_ONLY' ? '#EEF2FF' : '#FFF',
-                        color: searchMode === 'RAG_ONLY' ? '#4F46E5' : 'var(--text-secondary, #6B7280)',
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '4px',
-                        transition: 'all 0.2s'
-                      }}
-                    >
-                      <Search size={12} />
-                      查原文细节 (RAG)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSearchMode('WIKI_ONLY')}
-                      style={{
-                        padding: '4px 10px',
-                        fontSize: '11px',
-                        fontWeight: '600',
-                        borderRadius: '16px',
-                        border: '1px solid ' + (searchMode === 'WIKI_ONLY' ? 'var(--accent-color, #4F46E5)' : 'var(--border-color, #E5E7EB)'),
-                        background: searchMode === 'WIKI_ONLY' ? '#EEF2FF' : '#FFF',
-                        color: searchMode === 'WIKI_ONLY' ? '#4F46E5' : 'var(--text-secondary, #6B7280)',
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '4px',
-                        transition: 'all 0.2s'
-                      }}
-                    >
-                      <FileText size={12} />
-                      查概念总结 (Wiki)
-                    </button>
-                  </div>
                   <div className="input-bar-inner-container">
                     <form onSubmit={(e) => handleSendMessage(e)} className="input-bar-inner">
                       <button 

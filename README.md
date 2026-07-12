@@ -1,4 +1,4 @@
-﻿# Enterprise RAG / 企业 AI 知识工作台
+# Enterprise RAG / 企业 AI 知识工作台
 
 <p align="center">
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.13%2B-blue?logo=python&logoColor=white" alt="Python 3.13+"></a>
@@ -19,19 +19,19 @@
 文档 -> 切分 -> 向量化 -> 检索 -> 生成回答
 ```
 
-本项目在此基础上增加了一层 **知识编译能力**：
+本项目在此基础上增加了一层 **知识编译与混合检索能力**：
 
 ```text
 文档上传
   ├─ RAG Pipeline：切分、向量化、BM25、RRF、Rerank、引用问答
   └─ Wiki Pipeline：LLM 编译摘要、概念、条款、FAQ、原文依据
 
-用户提问
-  ├─ RAG_ONLY：查原文细节、政策条款、具体参数
-  └─ WIKI_ONLY：查文档总结、概念解释、结构化知识
+用户提问 (混合检索双路并流)
+  ├─ 第一路 (Wiki 路由)：召回 PostgreSQL 中大模型编译提炼好的名词定义、关键条款、典型问答卡片
+  └─ 第二路 (RAG 路由)：Chroma 多租户向量检索 + BM25 融合，获取最精准的物理原文细节分片
 ```
 
-它不是单纯的聊天 Demo，而是一个可演示、可部署、可评测、可被 Agent 调用的企业知识服务层。
+系统在底层将双路召回的上下文并发拼接，喂给 LLM。并在流式输出的尾部携带命中的 Wiki 项结构化数组。前端实现无感知自动渲染精致的知识卡片，为用户提供“既有宏观提炼、又有原文细节”的高质量知识问答。
 
 ---
 
@@ -77,16 +77,14 @@
 - Wiki 编译失败不影响原始 RAG 入库
 - Wiki 数据写入 PostgreSQL，并以 `doc_type="wiki"` 写入检索索引
 
-### 3.3 检索模式
+### 3.3 混合检索与卡片自动渲染
 
-目前支持两种模式：
+目前系统废弃了分裂的 `RAG_ONLY` 与 `WIKI_ONLY` 模式，升级为 **双路并流混合检索**。用户无需手动选择检索模式，问答系统在底层同时发起：
 
-| 模式 | 适用场景 | 数据来源 |
-| :--- | :--- | :--- |
-| `RAG_ONLY` | 查原文细节、制度条款、产品参数 | `doc_type=document` 原始文档分片 |
-| `WIKI_ONLY` | 查文档总结、概念解释、FAQ | `doc_type=wiki` 编译后的 Wiki 分片 |
+1. **第一路**：基于输入 Query 去关系型数据库模糊匹配当前租户下已编译好的 WikiPage / WikiItem（核心概念、合规条款与典型问答 FAQ）；
+2. **第二路**：使用多租户 RRF 融合召回 + Flashrank 交叉编码器精排，去 Chroma 向量库和倒排索引获取物理原文细节分片。
 
-> `RAG + Wiki` 双路混合召回可作为后续升级方向，目前项目优先保证两种单路模式稳定可用。
+随后将两路检索捞上来的上下文合并拼接，喂给 LLM。流式输出结束后，前端在消息气泡下方自动以极具设计感的 Lucide 矢量卡片平铺呈现本次问答命中的专有名词、合规条款或 FAQ。
 
 ### 3.4 多租户隔离
 
@@ -120,15 +118,16 @@ graph TD
     WikiCompiler --> WikiDB[(WikiPage / WikiItem)]
     WikiCompiler --> WikiIndex[Wiki 索引 doc_type=wiki]
 
-    User[用户提问 + JWT] --> Mode{检索模式}
-    Mode -->|RAG_ONLY| DocRetriever[文档混合检索: Vector + BM25 + RRF]
-    Mode -->|WIKI_ONLY| WikiRetriever[Wiki 结构化知识检索]
-    DocRetriever --> Rerank[Flashrank Rerank]
-    WikiRetriever --> Rerank
-    Rerank --> Critic[Critic 证据判定]
+    User[用户提问 + JWT] --> HybridRetrieval[混合检索: 两路并流并发发起]
+    HybridRetrieval -->|第一路| WikiDB[WikiItem 概念/合规/FAQ 匹配]
+    HybridRetrieval -->|第二路| DocRetriever[文档检索: Vector + BM25 + RRF + Rerank]
+    WikiDB --> ContextMerge[上下文合并拼装]
+    DocRetriever --> ContextMerge
+    ContextMerge --> Critic[Critic 证据判定]
     Critic -->|有依据| LLM[LLM 生成]
     Critic -->|无依据| Refusal[拒答]
-    LLM --> SSE[SSE 流式输出 + 引用来源]
+    LLM --> SSE[SSE 流式输出 + 尾部元数据携带 wiki_items]
+    SSE --> FrontEnd[前端自动渲染消息 & 精致 Wiki 卡片]
 ```
 
 ---
@@ -177,7 +176,7 @@ graph TD
 - `POST /api/v1/chat`
   - `message`: 用户问题
   - `session_id`: 会话 ID
-  - `search_mode`: `RAG_ONLY` / `WIKI_ONLY`
+  - 接入混合检索两路并流，不再割裂进行单模式路由传参。
 
 ### Wiki
 
@@ -236,7 +235,6 @@ graph TD
 2. **不替代人工决策**：涉及法律、财务、医疗等高风险问题时，需要人工复核。
 3. **Wiki 编译依赖 LLM 输出质量**：已做 JSON 解析兜底，但自动摘要仍需人工审阅。
 4. **当前未实现完整 GraphRAG**：跨文档实体关系推理仍是后续方向。
-5. **当前未实现 RAG + Wiki 双路并发融合**：现阶段优先保证 `RAG_ONLY` 和 `WIKI_ONLY` 两种模式稳定。
 
 ---
 
@@ -332,14 +330,11 @@ python -m pytest tests/test_api_flows.py tests/test_tools_api.py -q
 
 ## 13. 简历表达建议
 
-> 设计并实现企业 AI 知识工作台，支持文档解析、Markdown 层级切分、向量 + BM25 混合检索、RRF 融合、Flashrank 重排、Critic Agent 拒答、SSE 流式问答与引用溯源；在传统 RAG 原文检索基础上，新增 Wiki Knowledge Compiler，将上传文档自动编译为摘要、核心概念、关键条款和 FAQ，并基于 JWT 与 tenant_id metadata filter 实现多租户逻辑隔离，同时提供 MCP-ready 工具接口供 IDE Agent 调用。
+> 设计并实现企业级知识工作台，构建 Markdown 层级切分、向量 + BM25 混合检索、RRF 融合、Flashrank 重排、Critic Agent 证据判定与 SSE 流式问答引用溯源的 RAG 核心链路。在此基础上，自主设计并落地 Wiki Knowledge Compiler 异步编译流水线，将长文档自动生成为摘要、核心概念、合规条款和 FAQ。针对传统 RAG 概念认知差与原文细节检索的分裂痛点，重构并实现了“两路数据并流混合检索”架构：在底层并发发起 Wiki 提炼知识与原文细节检索，并基于 SSE 尾部元数据传递协议，实现前端对专有名词、FAQ 等实体卡片的零感知自动平铺渲染。基于 JWT 与 tenant_id filter 实现多租户全链路隔离，同时提供标准 MCP 工具服务以支持 IDE Agent 挂载。
 
 ---
 
-## 14. 后续计划
-
 - 补充 Wiki 工作流测试
 - 增加 Wiki 重新生成接口
-- 增加 RAG + Wiki 双路召回融合
 - 引入 ParentDocumentRetriever 解决跨段落召回问题
 - 对接更完善的线上 Trace 与监控
