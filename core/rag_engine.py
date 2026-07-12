@@ -435,7 +435,19 @@ class RAGEngine:
         ]
         if history:
             persona_messages.extend(history[-6:])
-        persona_message        # === 方案 B：混合检索（Hybrid Retrieval）—— 两路数据并流 ===
+        persona_messages.append({"role": "user", "content": question})
+        chain = standard_llm | StrOutputParser()
+        async for chunk in chain.astream(persona_messages):
+            yield chunk
+
+    async def stream_rag_answer(
+        self,
+        question: str,
+        history: list | None = None,
+        tenant_id: str = "default_tenant",
+        search_mode: str = "RAG_ONLY",
+    ):
+        # === 方案 B：混合检索（Hybrid Retrieval）—— 两路数据并流 ===
         # 第一路：去数据库捞取当前租户下编译好的 Wiki 专有名词、核心条款与 FAQ 读书笔记卡片
         from core.database import SessionLocal
         from core.models import WikiPage, WikiItem
