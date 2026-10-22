@@ -334,14 +334,3 @@ python -m pytest tests/test_api_flows.py tests/test_tools_api.py -q
 > Wiki 工作流建议后续补充 `tests/test_wiki_workflow.py`，覆盖 WikiPage / WikiItem 创建、JSON 解析失败降级、`RAG_ONLY` / `WIKI_ONLY` 检索过滤。
 
 ---
-
-## 13. 简历表达建议
-
-> 设计并实现企业级知识工作台，构建 Markdown 层级切分、向量 + BM25 混合检索、RRF 融合、Flashrank 重排、Critic Agent 证据判定与 SSE 流式问答引用溯源的 RAG 核心链路。在此基础上，自主设计并落地 Wiki Knowledge Compiler 异步编译流水线，将长文档自动生成为摘要、核心概念、合规条款和 FAQ。针对传统 RAG 概念认知差与原文细节检索的分裂痛点，重构并实现了“两路数据并流混合检索”架构：在底层并发发起 Wiki 提炼知识与原文细节检索，并基于 SSE 尾部元数据传递协议，实现前端对专有名词、FAQ 等实体卡片的零感知自动平铺渲染。基于 JWT 与 tenant_id filter 实现多租户全链路隔离，同时提供标准 MCP 工具服务以支持 IDE Agent 挂载。
-
----
-
-- 补充 Wiki 工作流测试
-- 增加 Wiki 重新生成接口
-- 引入 ParentDocumentRetriever 解决跨段落召回问题
-- 对接更完善的线上 Trace 与监控
